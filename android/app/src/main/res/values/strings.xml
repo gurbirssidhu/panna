@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Panna</string>
+    <string name="title_activity_main">Panna</string>
+    <string name="package_name">app.panna.reader</string>
+    <string name="custom_url_scheme">app.panna.reader</string>
+</resources>
