@@ -22,6 +22,8 @@ public class ReflowNativePlugin extends Plugin {
     private static JSArray pending = new JSArray();
     private static ReflowNativePlugin instance;
     static volatile boolean volumePaging = false;
+    /** files from other apps still being copied in; while it is above zero, take() reports busy so the page can say so */
+    static final java.util.concurrent.atomic.AtomicInteger copying = new java.util.concurrent.atomic.AtomicInteger();
 
     @Override
     public void load() {
@@ -35,6 +37,7 @@ public class ReflowNativePlugin extends Plugin {
             result.put("files", pending);
             pending = new JSArray();
         }
+        result.put("busy", copying.get() > 0);
         call.resolve(result);
     }
 
@@ -86,6 +89,12 @@ public class ReflowNativePlugin extends Plugin {
         }
         ReflowNativePlugin p = instance;
         if (p != null) p.notifyListeners("incoming", new JSObject());
+    }
+
+    /** a share or "open with" started: the copy can take a while for a big file */
+    static void receiving() {
+        ReflowNativePlugin p = instance;
+        if (p != null) p.notifyListeners("receiving", new JSObject());
     }
 
     static void volume(int dir) {

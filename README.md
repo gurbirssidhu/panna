@@ -22,20 +22,22 @@ Get the latest APK from **[Releases](../../releases/latest)**, open it on your p
 - Continue-reading card, search by title or author, sort, filter by format
 - Covers from each book's first page, progress on every book
 - Light, dark or follow-the-phone theme
-- Back up everything (books, highlights, bookmarks, places) to one file and restore it on another phone
+- Back up everything (books, highlights, bookmarks, places) to one file and restore it on another phone; large libraries (over 4 GB) work too
 
 **EPUB**
 - Page-turn or scroll, tap zones, swipe, volume keys
 - Text size, three typefaces (including Atkinson Hyperlegible), spacing, line width, hyphenation
 - Highlights in four colours with notes, bookmarks, full-text search, notes export
 - Footnotes open in a popup without losing your place
+- The book's own layout (centred headings, indented verse, small print) is kept, while your text size, typeface, line spacing and page colour still apply
+- Right-to-left books (Urdu, Shahmukhi Punjabi, Arabic, Persian, Hebrew) turn pages the right way
 
 **PDF and DjVu**
 - Pages exactly as printed, so equations, tables and diagrams stay intact
 - Scroll or one page at a time; pinch or double-tap to zoom
 - Trim white margins automatically, so text fills a phone screen
 - Night and sepia page colours
-- Search, contents and go-to-page; select PDF text to define or copy it
+- Search, contents and go-to-page; select PDF text to highlight it (four colours, with notes), define or copy it
 - Large PDFs open instantly: only the pages on screen are read from storage
 
 **Everywhere**
@@ -67,7 +69,7 @@ keyAlias=...
 keyPassword=...
 ```
 
-Without that file the release APK is unsigned. The whole interface is one file, `www/index.html`. Native code (file sharing, volume keys, full screen) is in `android/app/src/main/java/app/panna/reader/`. See [tools/BUILD_ENGINES.md](tools/BUILD_ENGINES.md) to rebuild the bundled engines, dictionary and icons.
+Without that file the release APK is unsigned. The interface is `www/index.html` (markup and styles) and `www/app.js` (all the code); `www/theme.js` only applies the saved theme before the first paint. Scripts live in files rather than inline so the page's Content-Security-Policy can forbid inline scripts and outside network requests: book content is shown inside the app's page, and that policy is what stops a malicious EPUB from running code or loading trackers. Native code (file sharing, volume keys, full screen) is in `android/app/src/main/java/app/panna/reader/`. See [tools/BUILD_ENGINES.md](tools/BUILD_ENGINES.md) to rebuild the bundled engines, dictionary and icons.
 
 ## Licence
 

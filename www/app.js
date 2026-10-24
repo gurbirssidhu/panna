@@ -15,16 +15,28 @@ let toastT;
 function toast(msg, ms = 3200) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => t.hidden = true, ms); }
 
 /* ---------- storage ---------- */
+/* Stores: 'meta' holds each book's details (title, last opened, ...), 'books' holds its file and cover, 'marks' holds
+   highlights and bookmarks. Details change often (every open), and putting a record that contains a Blob makes
+   IndexedDB write the whole file again, so files are written once, on import, and never rewritten. */
+const metaOf = b => { const { blob, cover, ...m } = b; return m; };
 const DB = {
   db: null, mem: new Map(), memMarks: new Map(),
   async open() {
     try {
       this.db = await new Promise((res, rej) => {
-        const r = indexedDB.open('reflow-reader', 2);
-        r.onupgradeneeded = () => {
+        const r = indexedDB.open('reflow-reader', 3);
+        r.onupgradeneeded = e => {
           const d = r.result;
           if (!d.objectStoreNames.contains('books')) d.createObjectStore('books', { keyPath: 'id' });
           if (!d.objectStoreNames.contains('marks')) d.createObjectStore('marks', { keyPath: 'id' }).createIndex('bookId', 'bookId');
+          if (!d.objectStoreNames.contains('meta')) {
+            const meta = d.createObjectStore('meta', { keyPath: 'id' });
+            // up to version 2, 'books' held details and file together: copy the details out (the files stay where they are)
+            if (e.oldVersion > 0) r.transaction.objectStore('books').openCursor().onsuccess = ev => {
+              const c = ev.target.result; if (!c) return;
+              meta.put(metaOf(c.value)); c.continue();
+            };
+          }
         };
         r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
       });
@@ -33,9 +45,36 @@ const DB = {
   req(store, mode, fn) {
     return new Promise((res, rej) => { const r = fn(this.db.transaction(store, mode).objectStore(store)); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
   },
-  async all() { if (this.db) { try { return await this.req('books', 'readonly', s => s.getAll()); } catch {} } return [...this.mem.values()]; },
-  async put(b) { this.mem.set(b.id, b); if (this.db) { try { await this.req('books', 'readwrite', s => s.put(b)); } catch { toast('Could not save to app storage. The book lasts until you close the app.'); } } },
-  async del(id) { this.mem.delete(id); if (this.db) { try { await this.req('books', 'readwrite', s => s.delete(id)); } catch {} } },
+  async all() {
+    if (this.db) {
+      try {
+        const [metas, files] = await Promise.all([this.req('meta', 'readonly', s => s.getAll()), this.req('books', 'readonly', s => s.getAll())]);
+        const byId = new Map(files.map(f => [f.id, f]));
+        return metas.filter(m => byId.has(m.id)).map(m => Object.assign(m, { blob: byId.get(m.id).blob, cover: byId.get(m.id).cover || null }));
+      } catch {}
+    }
+    return [...this.mem.values()];
+  },
+  /* a new book: file and details together */
+  async add(b) {
+    this.mem.set(b.id, b);
+    if (!this.db) return;
+    try {
+      await new Promise((res, rej) => {
+        const tx = this.db.transaction(['books', 'meta'], 'readwrite');
+        tx.objectStore('books').put({ id: b.id, blob: b.blob, cover: b.cover || null });
+        tx.objectStore('meta').put(metaOf(b));
+        tx.oncomplete = res; tx.onerror = tx.onabort = () => rej(tx.error);
+      });
+    } catch { toast('Could not save to app storage. The book lasts until you close the app.'); }
+  },
+  /* details only: never rewrites the file */
+  async put(b) { this.mem.set(b.id, b); if (this.db) { try { await this.req('meta', 'readwrite', s => s.put(metaOf(b))); } catch {} } },
+  async del(id) {
+    this.mem.delete(id);
+    if (!this.db) return;
+    try { await new Promise((res, rej) => { const tx = this.db.transaction(['books', 'meta'], 'readwrite'); tx.objectStore('books').delete(id); tx.objectStore('meta').delete(id); tx.oncomplete = res; tx.onerror = tx.onabort = () => rej(tx.error); }); } catch {}
+  },
   async marksFor(bookId) {
     if (this.db) { try { return await this.req('marks', 'readonly', s => s.index('bookId').getAll(bookId)); } catch {} }
     return [...this.memMarks.values()].filter(m => m.bookId === bookId);
@@ -89,6 +128,7 @@ async function saveBlob(filename, blob, dialogTitle) {
       if (off === 0) await FS.writeFile({ path, data: b64, directory: 'CACHE', recursive: true });
       else await FS.appendFile({ path, data: b64, directory: 'CACHE' });
       off += CH;
+      if (blob.size > 4 * CH) toast(`Preparing the file… ${Math.min(99, Math.round(off / blob.size * 100))}%`, 60000);
     } while (off < blob.size);
     const { uri } = await FS.getUri({ path, directory: 'CACHE' });
     $('#toast').hidden = true;
@@ -218,12 +258,20 @@ async function parseEpub(blob) {
   const opfPath = rf && rf.getAttribute('full-path');
   const opfFile = opfPath && zipFile(zip, opfPath);
   if (!opfFile) throw new Error('The EPUB package file is missing.');
+  // shop DRM (Adobe, Apple, Readium LCP) encrypts the chapters; font obfuscation alone is fine (fonts are not used anyway)
+  const encF = zip.file('META-INF/encryption.xml');
+  const encOther = encF && [...parseXml(await encF.async('string')).getElementsByTagNameNS('*', 'EncryptionMethod')].some(m => !/idpf\.org\/2008\/embedding|ns\.adobe\.com\/pdf\/enc#RC/.test(m.getAttribute('Algorithm') || ''));
+  if (encOther || zip.file('META-INF/sinf.xml') || zip.file('META-INF/license.lcpl')) throw new Error('This EPUB is locked with DRM, so it only opens in the app of the shop that sold it. Books without DRM work in Panna.');
   const opf = parseXml(await opfFile.async('string'));
   const base = dirOf(opfPath);
   const txt = tag => { const e = opf.getElementsByTagNameNS('*', tag)[0]; return e ? e.textContent.replace(/\s+/g, ' ').trim() : ''; };
   const man = new Map();
   for (const it of opf.getElementsByTagNameNS('*', 'item')) man.set(it.getAttribute('id'), { href: resolvePath(base, it.getAttribute('href') || ''), type: it.getAttribute('media-type') || '', props: it.getAttribute('properties') || '' });
   const spine = [];
+  const spineEl0 = opf.getElementsByTagNameNS('*', 'spine')[0];
+  const lang0 = txt('language');
+  // right-to-left books (Urdu, Shahmukhi Punjabi, Arabic, Persian, Hebrew…) turn pages the other way
+  const rtl = spineEl0 && spineEl0.getAttribute('page-progression-direction') ? spineEl0.getAttribute('page-progression-direction') === 'rtl' : /^(ar|fa|ur|he|iw|ps|sd|ug|yi|dv|ckb|pnb)(-|$)/i.test(lang0);
   for (const ir of opf.getElementsByTagNameNS('*', 'itemref')) { if (ir.getAttribute('linear') === 'no') continue; const m = man.get(ir.getAttribute('idref')); if (m && !spine.includes(m.href)) spine.push(m.href); }
   let toc = [];
   const navItem = [...man.values()].find(m => m.props.split(/\s+/).includes('nav'));
@@ -254,7 +302,9 @@ async function parseEpub(blob) {
   const ci = [...man.values()].find(m => m.props.split(/\s+/).includes('cover-image'));
   if (ci) coverPath = ci.href;
   else { const meta = [...opf.getElementsByTagNameNS('*', 'meta')].find(m => m.getAttribute('name') === 'cover'); const m = meta && man.get(meta.getAttribute('content')); if (m && /^image\//.test(m.type)) coverPath = m.href; }
-  return { zip, title: txt('title'), author: txt('creator'), lang: txt('language'), spine, toc, coverPath };
+  // uncompressed size of each section: progress is weighted by length, so a one-page cover doesn't count as much as a long chapter
+  const sizes = spine.map(h => { const f = zipFile(zip, h); return Math.max(1, (f && f._data && f._data.uncompressedSize) || 1); });
+  return { zip, title: txt('title'), author: txt('creator'), lang: lang0, spine, toc, coverPath, sizes, rtl };
 }
 
 /* ---------- sample book ---------- */
@@ -313,8 +363,10 @@ const hash = s => { let h = 0; for (const c of s) h = (h * 31 + c.codePointAt(0)
 const FMT_LABEL = { epub: 'EPUB', pdf: 'PDF', djvu: 'DjVu' };
 const fmtOf = b => b.format || 'epub';
 function urlFor(key, blob) { if (!blob) return null; if (!state.urls.has(key)) state.urls.set(key, URL.createObjectURL(blob)); return state.urls.get(key); }
+const FINISHED = 0.99; // one threshold for the ✓ badge, the "Finished" label and leaving "Continue reading"
 function progressOf(b) {
   const p = LS.get('reflow:pos:' + b.id, null); if (!p || !p.total) return 0;
+  if (typeof p.p === 'number') return Math.min(1, Math.max(0, p.p)); // saved by the reader (EPUB: weighted by section length)
   return p.fixed ? Math.min(1, (p.page + 1) / p.total) : Math.min(1, (p.idx + p.frac) / p.total);
 }
 function placeOf(b) {
@@ -345,7 +397,7 @@ function coverEl(b, cls) {
 }
 function renderShelf() { renderHero(); renderChips(); renderGrid(); }
 function renderHero() {
-  const cands = state.books.filter(b => b.opened && progressOf(b) < 0.995).sort((a, b) => b.opened - a.opened);
+  const cands = state.books.filter(b => b.opened && progressOf(b) < FINISHED).sort((a, b) => b.opened - a.opened);
   const b = cands[0];
   $('#hero').hidden = !b; if (!b) return;
   const old = $('#hero-cover'); const cov = coverEl(b); cov.id = 'hero-cover'; old.replaceWith(cov);
@@ -398,7 +450,7 @@ function renderGrid() {
     const cov = coverEl(b);
     const f = document.createElement('span'); f.className = 'fmt'; f.textContent = FMT_LABEL[fmtOf(b)].toUpperCase(); cov.append(f);
     const pr = progressOf(b);
-    if (pr >= 0.99) { const d = document.createElement('span'); d.className = 'done'; d.title = 'Finished'; d.innerHTML = '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>'; cov.append(d); }
+    if (pr >= FINISHED) { const d = document.createElement('span'); d.className = 'done'; d.title = 'Finished'; d.innerHTML = '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>'; cov.append(d); }
     cov.addEventListener('click', () => openBook(b.id));
     const row = document.createElement('div'); row.className = 'b-row';
     const tx = document.createElement('div'); tx.className = 'b-txt';
@@ -406,7 +458,7 @@ function renderGrid() {
     const m = document.createElement('div'); m.className = 'b-meta';
     const bits = [];
     if (b.author) bits.push(b.author); else if (b.pages && fmtOf(b) !== 'epub') bits.push(`${fmt(b.pages)} pages`);
-    bits.push(pr >= 0.99 ? 'Finished' : pr > 0 ? `${Math.round(pr * 100)}%` : 'New');
+    bits.push(pr >= FINISHED ? 'Finished' : pr > 0 ? `${Math.round(pr * 100)}%` : 'New');
     m.textContent = bits.join(' · ');
     tx.append(t, m);
     const more = document.createElement('button'); more.type = 'button'; more.className = 'b-more'; more.setAttribute('aria-label', 'Options for ' + b.title);
@@ -414,7 +466,7 @@ function renderGrid() {
     more.addEventListener('click', () => openBookSheet(b));
     row.append(tx, more);
     card.append(cov, row);
-    if (pr > 0 && pr < 0.99) { const bar = document.createElement('div'); bar.className = 'b-prog'; const bi = document.createElement('i'); bi.style.width = (pr * 100) + '%'; bar.append(bi); card.append(bar); }
+    if (pr > 0 && pr < FINISHED) { const bar = document.createElement('div'); bar.className = 'b-prog'; const bi = document.createElement('i'); bi.style.width = (pr * 100) + '%'; bar.append(bi); card.append(bar); }
     grid.append(card);
   }
 }
@@ -464,15 +516,17 @@ window.addEventListener('drop', e => { e.preventDefault(); dragN = 0; $('#drop-h
 async function sniff(f) {
   const h = new Uint8Array(await f.slice(0, 1024).arrayBuffer());
   const s = String.fromCharCode(...h.slice(0, 16));
-  if (s.startsWith('%PDF') || String.fromCharCode(...h).includes('%PDF-')) return 'pdf';
+  if (s.startsWith('%PDF')) return 'pdf';
   if (s.startsWith('AT&TFORM') || s.startsWith('FORM')) return 'djvu';
+  // zip before the loose "%PDF-" check below: a backup can store a PDF as its first entry
   if (h[0] === 0x50 && h[1] === 0x4B) {
     const first = String.fromCharCode(...h.slice(30, 38)), head = String.fromCharCode(...h.slice(30, 90));
     if (first === 'mimetype' && head.includes('application/epub+zip')) return 'epub';
-    try { const z = await JSZip.loadAsync(f); if (z.file('reflow-backup.json')) return 'backup'; if (z.file('META-INF/container.xml')) return 'epub'; } catch {}
+    try { const z = await zipEntries(f); if (z.has('reflow-backup.json')) return 'backup'; if (z.has('META-INF/container.xml')) return 'epub'; } catch {} // central directory only: never loads the file
     return 'zip';
   }
-  const ext = ((f.name || '').match(/\.([a-z0-9]+)$/i) || [])[1];
+  if (String.fromCharCode(...h).includes('%PDF-')) return 'pdf'; // some PDFs have junk before the header
+  const ext =((f.name || '').match(/\.([a-z0-9]+)$/i) || [])[1];
   return { epub: 'epub', pdf: 'pdf', djvu: 'djvu', djv: 'djvu' }[(ext || '').toLowerCase()] || 'unknown';
 }
 async function handleFile(f) {
@@ -485,7 +539,7 @@ async function handleFile(f) {
   try {
     const rec = kind === 'epub' ? await importEpub(f) : kind === 'pdf' ? await importPdf(f) : await importDjvu(f);
     rec.id = uuid(); rec.format = kind; rec.blob = f; rec.fileName = f.name || ''; rec.added = Date.now();
-    await DB.put(rec); state.books.push(rec); renderShelf();
+    await DB.add(rec); state.books.push(rec); renderShelf();
     toast(`Added “${rec.title}”.`);
     return rec;
   } catch (e) { toast((e && e.message) || `${f.name} could not be added.`, 5000); return null; }
@@ -542,6 +596,110 @@ async function importDjvu(f) {
   } finally { setTimeout(() => { try { w.terminate(); } catch {} }, 200); }
 }
 
+/* ---------- zip (stored, streamed) ----------
+   A backup holds every book, so it can be several GB. JSZip builds the whole archive in memory and has no ZIP64,
+   so backups are written and read here: entries are stored uncompressed, the archive is a Blob that only refers
+   to the book files (nothing is copied into memory), and reading takes slices of the chosen file. */
+// CRC-32 by "slicing by 8": eight bytes per step with eight tables, several times faster than one byte at a time
+const CRC_T = (() => {
+  const t = new Uint32Array(256 * 8);
+  for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; }
+  for (let k = 1; k < 8; k++) for (let n = 0; n < 256; n++) { const p = t[(k - 1) * 256 + n]; t[k * 256 + n] = (p >>> 8) ^ t[p & 255]; }
+  return t;
+})();
+async function crc32(blob, onBytes) {
+  let c = 0xFFFFFFFF; const CH = 4 << 20;
+  for (let off = 0; off < blob.size; off += CH) {
+    const b = new Uint8Array(await blob.slice(off, off + CH).arrayBuffer());
+    const T = CRC_T, L = b.length - 7; let i = 0;
+    for (; i < L; i += 8) {
+      const a = (b[i] | (b[i + 1] << 8) | (b[i + 2] << 16) | (b[i + 3] << 24)) ^ c;
+      c = T[1792 + (a & 255)] ^ T[1536 + ((a >>> 8) & 255)] ^ T[1280 + ((a >>> 16) & 255)] ^ T[1024 + (a >>> 24)] ^ T[768 + b[i + 4]] ^ T[512 + b[i + 5]] ^ T[256 + b[i + 6]] ^ T[b[i + 7]];
+    }
+    for (; i < b.length; i++) c = T[(c ^ b[i]) & 255] ^ (c >>> 8);
+    if (onBytes) onBytes(b.length);
+  }
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+const U32 = 0xFFFFFFFF;
+function zip64Extra(vals) { const v = new DataView(new ArrayBuffer(4 + 8 * vals.length)); v.setUint16(0, 1, true); v.setUint16(2, 8 * vals.length, true); vals.forEach((x, i) => v.setBigUint64(4 + 8 * i, BigInt(x), true)); return new Uint8Array(v.buffer); }
+async function zipBlob(entries, onBytes) { // entries: [{ name, blob }]
+  const enc = new TextEncoder(), parts = [], central = [];
+  const d = new Date(), time = (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1), date = ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
+  let off = 0;
+  for (const e of entries) {
+    const name = enc.encode(e.name), size = e.blob.size, crc = await crc32(e.blob, onBytes), big = size >= U32;
+    const x = big ? zip64Extra([size, size]) : new Uint8Array(0);
+    const h = new DataView(new ArrayBuffer(30));
+    h.setUint32(0, 0x04034b50, true); h.setUint16(4, big ? 45 : 20, true); h.setUint16(6, 0x0800, true); // UTF-8 names, stored
+    h.setUint16(10, time, true); h.setUint16(12, date, true); h.setUint32(14, crc, true);
+    h.setUint32(18, big ? U32 : size, true); h.setUint32(22, big ? U32 : size, true); h.setUint16(26, name.length, true); h.setUint16(28, x.length, true);
+    parts.push(h.buffer, name, x, e.blob);
+    central.push({ name, size, crc, off });
+    off += 30 + name.length + x.length + size;
+  }
+  const cdStart = off;
+  for (const c of central) {
+    const vals = c.size >= U32 ? [c.size, c.size] : []; if (c.off >= U32) vals.push(c.off);
+    const x = vals.length ? zip64Extra(vals) : new Uint8Array(0);
+    const h = new DataView(new ArrayBuffer(46));
+    h.setUint32(0, 0x02014b50, true); h.setUint16(4, 45, true); h.setUint16(6, vals.length ? 45 : 20, true); h.setUint16(8, 0x0800, true);
+    h.setUint16(12, time, true); h.setUint16(14, date, true); h.setUint32(16, c.crc, true);
+    h.setUint32(20, c.size >= U32 ? U32 : c.size, true); h.setUint32(24, c.size >= U32 ? U32 : c.size, true);
+    h.setUint16(28, c.name.length, true); h.setUint16(30, x.length, true); h.setUint32(42, c.off >= U32 ? U32 : c.off, true);
+    parts.push(h.buffer, c.name, x); off += 46 + c.name.length + x.length;
+  }
+  const cdSize = off - cdStart, n = central.length, z64 = cdStart >= U32 || n >= 0xFFFF;
+  if (z64) {
+    const r = new DataView(new ArrayBuffer(76));
+    r.setUint32(0, 0x06064b50, true); r.setBigUint64(4, 44n, true); r.setUint16(12, 45, true); r.setUint16(14, 45, true);
+    r.setBigUint64(24, BigInt(n), true); r.setBigUint64(32, BigInt(n), true); r.setBigUint64(40, BigInt(cdSize), true); r.setBigUint64(48, BigInt(cdStart), true);
+    r.setUint32(56, 0x07064b50, true); r.setBigUint64(64, BigInt(off), true); r.setUint32(72, 1, true);
+    parts.push(r.buffer);
+  }
+  const e = new DataView(new ArrayBuffer(22));
+  e.setUint32(0, 0x06054b50, true); e.setUint16(8, z64 ? 0xFFFF : n, true); e.setUint16(10, z64 ? 0xFFFF : n, true);
+  e.setUint32(12, cdSize, true); e.setUint32(16, z64 ? U32 : cdStart, true);
+  parts.push(e.buffer);
+  return new Blob(parts, { type: 'application/zip' });
+}
+async function zipEntries(blob) { // reads the central directory: Map name → { method, csize, size, off }
+  const tl = Math.min(blob.size, 65557);
+  const t = new DataView(await blob.slice(blob.size - tl).arrayBuffer());
+  let e = -1; for (let i = tl - 22; i >= 0; i--) if (t.getUint32(i, true) === 0x06054b50) { e = i; break; }
+  if (e < 0) throw new Error('not a zip file');
+  let n = t.getUint16(e + 10, true), cdSize = t.getUint32(e + 12, true), cdOff = t.getUint32(e + 16, true);
+  if ((n === 0xFFFF || cdSize === U32 || cdOff === U32) && e >= 20 && t.getUint32(e - 20, true) === 0x07064b50) {
+    const at = Number(t.getBigUint64(e - 12, true));
+    const z = new DataView(await blob.slice(at, at + 56).arrayBuffer());
+    if (z.getUint32(0, true) === 0x06064b50) { n = Number(z.getBigUint64(32, true)); cdSize = Number(z.getBigUint64(40, true)); cdOff = Number(z.getBigUint64(48, true)); }
+  }
+  const cd = new DataView(await blob.slice(cdOff, cdOff + cdSize).arrayBuffer()), dec = new TextDecoder(), out = new Map();
+  for (let k = 0, p = 0; k < n && p + 46 <= cd.byteLength && cd.getUint32(p, true) === 0x02014b50; k++) {
+    let csize = cd.getUint32(p + 20, true), size = cd.getUint32(p + 24, true), off = cd.getUint32(p + 42, true);
+    const nl = cd.getUint16(p + 28, true), xl = cd.getUint16(p + 30, true), cl = cd.getUint16(p + 32, true);
+    for (let q = p + 46 + nl; q + 4 <= p + 46 + nl + xl; q += 4 + cd.getUint16(q + 2, true)) {
+      if (cd.getUint16(q, true) !== 1) continue;
+      let r = q + 4;
+      if (size === U32) { size = Number(cd.getBigUint64(r, true)); r += 8; }
+      if (csize === U32) { csize = Number(cd.getBigUint64(r, true)); r += 8; }
+      if (off === U32) off = Number(cd.getBigUint64(r, true));
+    }
+    out.set(dec.decode(new Uint8Array(cd.buffer, p + 46, nl)), { method: cd.getUint16(p + 10, true), csize, size, off });
+    p += 46 + nl + xl + cl;
+  }
+  return out;
+}
+async function zipEntryBlob(blob, ent, type = '') {
+  const h = new DataView(await blob.slice(ent.off, ent.off + 30).arrayBuffer());
+  if (h.getUint32(0, true) !== 0x04034b50) throw new Error('damaged zip entry');
+  const start = ent.off + 30 + h.getUint16(26, true) + h.getUint16(28, true);
+  const raw = blob.slice(start, start + ent.csize, type);
+  if (ent.method === 0) return raw; // stored: a slice of the file, read only when used
+  if (ent.method === 8 && window.DecompressionStream) return new Blob([await new Response(raw.stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer()], { type });
+  throw new Error('unsupported zip compression');
+}
+
 /* ---------- backup ---------- */
 const EXT = { epub: 'epub', pdf: 'pdf', djvu: 'djvu' };
 const TYPE = { epub: 'application/epub+zip', pdf: 'application/pdf', djvu: 'image/vnd.djvu' };
@@ -551,18 +709,19 @@ async function exportBackup() {
   if (!books.length) { toast('There are no books to back up yet.'); return; }
   toast('Packing the backup…', 120000);
   try {
-    const zip = new JSZip();
     const marks = (await DB.allMarks()).filter(m => books.some(b => b.id === m.bookId));
     const meta = { app: 'reflow', format: 2, created: new Date().toISOString(), prefs, theme, books: [], marks };
+    const entries = [];
     for (const b of books) {
       const f = fmtOf(b);
       const e = { id: b.id, title: b.title, author: b.author, format: f, fileName: b.fileName, pages: b.pages, added: b.added, opened: b.opened, pos: LS.get('reflow:pos:' + b.id, null), cover: false, file: `books/${b.id}.${EXT[f]}` };
-      zip.file(e.file, b.blob, { compression: 'STORE' });
-      if (b.cover) { zip.file(`covers/${b.id}`, b.cover, { compression: 'STORE' }); e.cover = true; e.coverType = b.cover.type || 'image/jpeg'; }
+      entries.push({ name: e.file, blob: b.blob });
+      if (b.cover) { entries.push({ name: `covers/${b.id}`, blob: b.cover }); e.cover = true; e.coverType = b.cover.type || 'image/jpeg'; }
       meta.books.push(e);
     }
-    zip.file('reflow-backup.json', JSON.stringify(meta));
-    const blob = await zip.generateAsync({ type: 'blob', mimeType: 'application/zip' });
+    entries.unshift({ name: 'reflow-backup.json', blob: new Blob([JSON.stringify(meta)], { type: 'application/json' }) });
+    const total = entries.reduce((n, e) => n + e.blob.size, 0); let done = 0, shown = -1;
+    const blob = await zipBlob(entries, k => { done += k; const pc = Math.floor(done / Math.max(1, total) * 100); if (pc !== shown) { shown = pc; toast(`Packing the backup… ${pc}%`, 120000); } });
     const d = new Date(); const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1, 2)}-${pad(d.getDate(), 2)}`;
     $('#toast').hidden = true;
     await saveBlob(`Panna backup ${stamp}.zip`, blob, 'Save your Panna backup');
@@ -570,24 +729,26 @@ async function exportBackup() {
 }
 async function importBackup(file) {
   closeLSheets();
-  let zip;
-  try { zip = await JSZip.loadAsync(file); } catch { toast('That file is not a Panna or Reflow backup.'); return; }
-  const mf = zip.file('reflow-backup.json');
-  if (!mf) { toast('That zip file is not a Panna or Reflow backup.'); return; }
+  let ents, readEntry;
+  try {
+    ents = await zipEntries(file);
+    readEntry = (name, type) => { const en = ents.get(name); return en ? zipEntryBlob(file, en, type) : null; };
+  } catch { toast('That file is not a Panna or Reflow backup.'); return; }
+  if (!ents.has('reflow-backup.json')) { toast('That zip file is not a Panna or Reflow backup.'); return; }
   toast('Restoring…', 120000);
   try {
-    const meta = JSON.parse(await mf.async('string'));
+    const meta = JSON.parse(await (await readEntry('reflow-backup.json')).text());
     const have = new Set(state.books.map(b => b.id));
-    let nb = 0, nm = 0, skipped = 0;
+    let nb = 0, nm = 0, skipped = 0, i = 0;
     for (const e of meta.books || []) {
+      i++;
       if (have.has(e.id)) { skipped++; continue; }
       const f = e.format || 'epub';
-      const ef = zip.file(e.file || `books/${e.id}.epub`); if (!ef) continue;
-      const blob = new Blob([await ef.async('arraybuffer')], { type: TYPE[f] });
-      let cover = null;
-      if (e.cover) { const cf = zip.file(`covers/${e.id}`); if (cf) cover = new Blob([await cf.async('arraybuffer')], { type: e.coverType || 'image/jpeg' }); }
+      const blob = await readEntry(e.file || `books/${e.id}.epub`, TYPE[f]); if (!blob) continue;
+      const cover = e.cover ? await readEntry(`covers/${e.id}`, e.coverType || 'image/jpeg') : null;
       const rec = { id: e.id, title: e.title || 'Untitled', author: e.author || '', format: f, fileName: e.fileName || '', pages: e.pages, added: e.added || Date.now(), opened: e.opened, blob, cover };
-      await DB.put(rec); state.books.push(rec); nb++;
+      toast(`Restoring… book ${i} of ${meta.books.length}`, 120000);
+      await DB.add(rec); state.books.push(rec); nb++;
       if (e.pos && !LS.get('reflow:pos:' + e.id, null)) LS.set('reflow:pos:' + e.id, e.pos);
     }
     const existing = new Set((await DB.allMarks()).map(m => m.id));
@@ -605,8 +766,10 @@ async function pullIncoming() {
   const N = NATIVE(); if (!N) return;
   let res; try { res = await N.take(); } catch { return; }
   const files = (res && res.files) || [];
+  if (!files.length) { if (res && res.busy) toast('Receiving the file…', 60000); return; }
   let last = null;
   for (const f of files) {
+    if (f.error) { toast(`Could not open ${f.name || 'the shared file'}. ${f.error}`, 6000); continue; }
     try {
       const r = await fetch(Cap.convertFileSrc('file://' + f.path));
       const blob = await r.blob();
@@ -633,9 +796,12 @@ function applyPrefs() {
   $('#pref-trim').checked = !!prefs.trim; applyDim();
   $('#pref-awake').checked = !!prefs.awake; $('#pref-vol').checked = !!prefs.vol; $('#pref-full').checked = !!prefs.full;
   $('#vol-row').hidden = !isNative; $('#full-row').hidden = !isNative;
-  if (state.reader) { keepAwake(prefs.awake); volumePaging(prefs.vol); }
+  if (state.reader) keepAwake(prefs.awake);
+  syncVolume();
   setStatusBar();
 }
+/* volume keys turn pages only while reading: not during read-aloud (they should change its volume) or with a sheet open */
+function syncVolume() { volumePaging(!!(state.reader && prefs.vol && !TTS.playing && !anySheetOpen())); }
 function changePref(fn) {
   const R = state.reader; const f = R ? R.frac : 0;
   fn(); LS.set('reflow:prefs', prefs); applyPrefs();
@@ -651,6 +817,7 @@ $('#pref-full').addEventListener('change', e => changePref(() => prefs.full = e.
 /* ---------- reader: sheets ---------- */
 function closeSheets() { ['#drawer', '#prefs', '#notebox', '#fnbox', '#dictbox'].forEach(s => $(s).hidden = true); $('#scrim').hidden = true; }
 function anySheetOpen() { return !$('#drawer').hidden || !$('#prefs').hidden || !$('#notebox').hidden || !$('#fnbox').hidden || !$('#dictbox').hidden; }
+{ const mo = new MutationObserver(() => syncVolume()); ['#drawer', '#prefs', '#notebox', '#fnbox', '#dictbox'].forEach(s => mo.observe($(s), { attributes: true, attributeFilter: ['hidden'] })); }
 $('#scrim').addEventListener('click', closeSheets);
 $('#drawer-close').addEventListener('click', closeSheets);
 $('#r-prefs-btn').addEventListener('click', () => { const open = $('#prefs').hidden; closeSheets(); $('#prefs').hidden = !open; });
@@ -683,8 +850,8 @@ async function openBook(id) {
   try { bk = await parseEpub(b.blob); } catch (e) { toast(e.message || 'This book could not be opened.'); return; }
   if (!bk.spine.length) { toast('This EPUB has no readable sections.'); return; }
   const marks = await DB.marksFor(b.id);
-  state.reader = { book: bk, rec: b, idx: 0, frac: 0, page: 0, pages: 1, W: 0, words: 0, assets: new Map(), texts: new Map(), path: '', marks, immersive: false, seq: 0 };
-  state.reader.immersive = isNative && prefs.full;
+  state.reader = { book: bk, rec: b, idx: 0, frac: 0, page: 0, pages: 1, W: 0, words: 0, assets: new Map(), texts: new Map(), path: '', marks, immersive: false, seq: 0, overall: 0, wpb: WPB, sheets: new Map() };
+  state.reader.immersive = true; // open with the menu hidden: the bars float over the text, so a visible menu would cover lines
   $('#reader').classList.toggle('immersive', state.reader.immersive);
   $('#content').lang = bk.lang || 'en';
   applyPrefs(); closeSheets(); hideSel();
@@ -709,7 +876,7 @@ function closeReader() {
     fxList().replaceChildren(); fxBox().hidden = true; $('#fx-loading').hidden = true;
     $('#scroller').hidden = false; $('#reader').classList.remove('fixed'); $('#layout-seg').dataset.pref = 'layout';
   } else for (const u of R.assets.values()) URL.revokeObjectURL(u);
-  state.reader = null; closeSheets(); hideSel();
+  state.reader = null; closeSheets(); hideSel(); document.adoptedStyleSheets = [];
   keepAwake(false); volumePaging(false);
   $('#content').replaceChildren(); $('#content').style.cssText = ''; $('#reader').hidden = true; document.body.style.overflow = '';
   setStatusBar();
@@ -742,13 +909,112 @@ async function assetUrl(path) {
   R.assets.set(path, u); return u;
 }
 
-const STRIP = 'script,style,link,meta,iframe,object,embed,base,form,title';
-function parseChapterBody(src) {
+/* Book content goes into the app's own page. The Content-Security-Policy in index.html is the main guard; this
+   cleanup is the second. Only elements without text are added to STRIP, so saved highlight offsets stay valid. */
+const STRIP = 'script,style,link,meta,iframe,object,embed,base,form,title,frame,frameset,animate,set,animateMotion,animateTransform,discard,source,track';
+const XLINK = 'http://www.w3.org/1999/xlink';
+const DROP_ATTR = /^(target|srcset|sizes|ping|action|formaction|background|lowsrc|dynsrc|codebase|manifest)$/i;
+const URL_ATTR = /^(href|src|poster|data|cite|longdesc|icon)$/i;
+const BAD_CSS = /url\s*\((?!\s*['"]?#)|expression\s*\(|@import|binding|behavior/i; // url(#id) points inside the SVG itself
+/* Book styling that is kept (from stylesheets and style attributes). Colours, typefaces, line height and absolute
+   text sizes are left to the reader's own settings, so Night mode and the text size work in every book. */
+const CSS_OK = new Set(['text-align', 'text-align-last', 'text-indent', 'font-style', 'font-weight', 'font-variant', 'font-variant-caps', 'text-transform',
+  'text-decoration-line', 'text-decoration-style', 'vertical-align', 'white-space', 'letter-spacing', 'word-spacing', 'font-size', 'display',
+  'margin-top', 'margin-bottom', 'margin-left', 'margin-right', 'padding-top', 'padding-bottom', 'padding-left', 'padding-right',
+  'list-style-type', 'list-style-position', 'float', 'clear', 'break-before', 'break-after', 'break-inside', 'page-break-before', 'page-break-after',
+  'page-break-inside', 'border-collapse', 'direction', 'unicode-bidi', 'hyphens']);
+const DISPLAY_OK = /^(none|block|inline|inline-block|list-item|table|table-row|table-cell|table-caption|table-header-group|table-row-group|table-footer-group|table-column|table-column-group)$/;
+function cssValueOk(prop, v) {
+  if (!v || BAD_CSS.test(v) || /var\(|attr\(|env\(/i.test(v)) return false;
+  if (prop === 'display') return DISPLAY_OK.test(v);
+  if (prop === 'font-size') return /^(smaller|larger|inherit|[\d.]+(em|%|ex))$/.test(v); // relative sizes only: the reader picks the text size
+  if (/^(margin|padding)/.test(prop)) return v.split(/\s+/).every(x => /^(auto|0|-?[\d.]+(em|ex|%|rem|ch))$/.test(x) || (/^-?[\d.]+(px|pt)$/.test(x) && Math.abs(parseFloat(x)) <= 40));
+  return true;
+}
+const HTML_NS = 'http://www.w3.org/1999/xhtml';
+function safeUrl(v, isLink) {
+  const s = v.replace(/[\u0000- \u007F]+/g, ''); // browsers ignore these inside a URL, so "java\tscript:" still runs
+  const m = /^([a-z][a-z0-9+.-]*):/i.exec(s);
+  if (!m) return true; // relative path or #fragment
+  if (/^(https?|mailto)$/i.test(m[1])) return true;
+  return !isLink && (/^data:image\//i.test(s) || /^blob:/i.test(s));
+}
+function sanitize(root) {
+  root.querySelectorAll(STRIP).forEach(el => el.remove());
+  for (const el of root.querySelectorAll('*')) {
+    const isLink = el.localName === 'a' || el.localName === 'area';
+    for (const a of [...el.attributes]) {
+      const n = a.localName;
+      if (/^on/i.test(n) || DROP_ATTR.test(n) || (URL_ATTR.test(n) && !safeUrl(a.value, isLink))) el.removeAttributeNode(a);
+      else if (n === 'class') a.value = a.value.split(/\s+/).filter(Boolean).map(c => 'b-' + c).join(' '); // never matches the app's own classes
+      else if (n === 'style') {
+        const st = el.style, html = !el.namespaceURI || el.namespaceURI === HTML_NS;
+        // HTML: only the allowed properties; SVG drawings keep their styling except outside references
+        if (st) for (const p of [...st]) { const v = st.getPropertyValue(p); if (html ? !(CSS_OK.has(p) && cssValueOk(p, v)) : BAD_CSS.test(v)) st.removeProperty(p); }
+        if (!st || !el.getAttribute('style') || BAD_CSS.test(el.getAttribute('style'))) el.removeAttribute('style');
+      }
+    }
+  }
+  return root;
+}
+const linkHref = a => a.getAttribute('href') || a.getAttributeNS(XLINK, 'href') || '';
+function parseChapter(src) {
   let doc = new DOMParser().parseFromString(src, 'application/xhtml+xml');
   if (doc.getElementsByTagName('parsererror').length) doc = new DOMParser().parseFromString(src, 'text/html');
-  const body = doc.body || doc.getElementsByTagName('body')[0] || doc.documentElement;
-  body.querySelectorAll(STRIP).forEach(el => el.remove());
-  return body;
+  const body = doc.body || doc.getElementsByTagName('body')[0] || doc.documentElement, html = doc.documentElement;
+  const at = n => (body.getAttribute(n) || html.getAttribute(n) || '').trim();
+  const info = {
+    links: [...doc.querySelectorAll('link')].filter(l => /stylesheet/i.test(l.getAttribute('rel') || '')).map(l => l.getAttribute('href')).filter(Boolean),
+    inline: [...doc.querySelectorAll('style')].map(x => x.textContent),
+    dir: /^(rtl|ltr)$/i.test(at('dir')) ? at('dir').toLowerCase() : '',
+    lang: [at('xml:lang'), at('lang')].find(l => /^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$/.test(l)) || '',
+    cls: (body.getAttribute('class') || '').split(/\s+/).filter(c => /^[\w-]+$/.test(c)).map(c => 'b-' + c).join(' ')
+  };
+  return { body: sanitize(body), info };
+}
+const parseChapterBody = src => parseChapter(src).body;
+
+/* The book's own CSS, reduced to CSS_OK and scoped to the chapter: html/body rules apply to the chapter wrapper, class
+   names get the same b- prefix as the content. Built as a constructed stylesheet, rule by rule, so a broken rule is dropped. */
+function splitSelectors(t) { const out = []; let depth = 0, cur = ''; for (const ch of t) { if (ch === '(' || ch === '[') depth++; else if (ch === ')' || ch === ']') depth--; if (ch === ',' && !depth) { out.push(cur); cur = ''; } else cur += ch; } out.push(cur); return out.map(x => x.trim()).filter(Boolean); }
+function scopeSelector(sel) {
+  if (/:root|::?(-webkit-|-moz-)?(scrollbar|selection)/i.test(sel)) return null;
+  sel = sel.replace(/\.(-?[_a-zA-Z][\w-]*)/g, '.b-$1').replace(/^html\b\s*/i, '');
+  if (/^body\b/i.test(sel)) return { sel: '#content .bk' + sel.slice(4), top: true };
+  return { sel: sel ? '#content .bk ' + sel : '#content .bk', top: !sel };
+}
+function bookSheet(cssText) {
+  const sheet = new CSSStyleSheet();
+  let src; try { src = new CSSStyleSheet(); src.replaceSync(cssText.replace(/@import[^;]*;/gi, '')); } catch { return sheet; }
+  const walk = rules => {
+    for (const r of rules) {
+      if (r.type === CSSRule.MEDIA_RULE) { if (matchMedia(r.media.mediaText || 'all').matches) walk(r.cssRules); continue; }
+      if (r.type === CSSRule.SUPPORTS_RULE) { walk(r.cssRules); continue; }
+      if (r.type !== CSSRule.STYLE_RULE) continue;
+      for (const one of splitSelectors(r.selectorText)) {
+        const sc = scopeSelector(one); if (!sc) continue;
+        const decl = [];
+        for (const p of r.style) {
+          if (!CSS_OK.has(p) || (sc.top && /^(margin|padding|display|float)/.test(p))) continue; // body margins would add to the reader's own
+          const v = r.style.getPropertyValue(p).trim();
+          if (cssValueOk(p, v)) decl.push(`${p}:${v}`);
+        }
+        if (decl.length) try { sheet.insertRule(`${sc.sel}{${decl.join(';')}}`, sheet.cssRules.length); } catch {}
+      }
+    }
+  };
+  try { walk(src.cssRules); } catch {}
+  return sheet;
+}
+async function chapterSheet(info, chDir) {
+  const R = state.reader;
+  const key = info.links.map(h => resolvePath(chDir, h)).join('|') + '\n' + info.inline.join('\n');
+  if (!R.sheets.has(key)) {
+    let text = '';
+    for (const h of info.links) { const f = zipFile(R.book.zip, resolvePath(chDir, h)); if (f) text += await f.async('string') + '\n'; }
+    R.sheets.set(key, bookSheet(text + info.inline.join('\n')));
+  }
+  return R.sheets.get(key);
 }
 async function chapterSource(idx) {
   const R = state.reader; const f = zipFile(R.book.zip, R.book.spine[idx]);
@@ -778,12 +1044,21 @@ function wrapRange(root, start, end, make) {
   return created;
 }
 function unwrapMarks(root, sel) { root.querySelectorAll(sel).forEach(m => { const p = m.parentNode; while (m.firstChild) p.insertBefore(m.firstChild, m); p.removeChild(m); }); root.normalize(); }
+const hlMark = h => () => { const m = document.createElement('mark'); m.className = `hl c-${h.color || 'yellow'}${h.note ? ' has-note' : ''}`; m.dataset.id = h.id; return m; };
 function paintHighlights() {
   const R = state.reader; if (!R) return;
+  if (R.fixed) { for (const i of R.rendered.keys()) paintFx(i); return; }
   const c = $('#content');
-  unwrapMarks(c, 'mark.hl');
+  unwrapMarks(c, 'mark.hl'); R.nodes = null;
   const hls = R.marks.filter(m => m.kind === 'hl' && m.idx === R.idx).sort((a, b) => a.start - b.start);
-  for (const h of hls) wrapRange(c, h.start, h.end, () => { const m = document.createElement('mark'); m.className = `hl c-${h.color || 'yellow'}${h.note ? ' has-note' : ''}`; m.dataset.id = h.id; return m; });
+  for (const h of hls) wrapRange(c, h.start, h.end, hlMark(h));
+}
+/* PDF highlights: offsets count characters of the page's text layer, which pdf.js builds the same way every time */
+function paintFx(i) {
+  const R = state.reader; const pg = fxList().children[i] && fxList().children[i].firstChild;
+  const tl = pg && pg.querySelector('.textLayer'); if (!tl) return;
+  unwrapMarks(tl, 'mark.hl');
+  for (const h of R.marks.filter(m => m.kind === 'hl' && m.page === i).sort((a, b) => a.start - b.start)) wrapRange(tl, h.start, h.end, hlMark(h));
 }
 
 async function showChapter(idx, frac = 0, target = null) {
@@ -791,15 +1066,18 @@ async function showChapter(idx, frac = 0, target = null) {
   idx = Math.max(0, Math.min(R.book.spine.length - 1, idx));
   const seq = ++R.seq;
   R.idx = idx; R.path = R.book.spine[idx];
-  const body = parseChapterBody(await chapterSource(idx));
-  if (seq !== R.seq || state.reader !== R) return;
-  const content = $('#content'); content.replaceChildren(); content.style.cssText = '';
-  for (const node of [...body.childNodes]) content.appendChild(document.importNode(node, true));
+  const { body, info } = parseChapter(await chapterSource(idx));
   const chDir = dirOf(R.path);
-  for (const el of content.querySelectorAll('*')) for (const a of [...el.attributes]) {
-    if (/^on/i.test(a.name)) el.removeAttribute(a.name);
-    else if (/href$|^src$/i.test(a.name) && /^\s*javascript:/i.test(a.value)) el.removeAttribute(a.name);
-  }
+  const sheet = await chapterSheet(info, chDir);
+  if (seq !== R.seq || state.reader !== R) return;
+  const content = $('#content'); content.replaceChildren(); content.style.cssText = ''; R.nodes = null;
+  // a wrapper keeps the chapter's direction, language and body classes; #content itself stays left-to-right so the page columns still run in order
+  const wrap = document.createElement('div'); wrap.className = 'bk' + (info.cls ? ' ' + info.cls : '');
+  if (info.dir || R.book.rtl) wrap.dir = info.dir || 'rtl';
+  if (info.lang) wrap.lang = info.lang;
+  for (const node of [...body.childNodes]) wrap.appendChild(document.importNode(node, true));
+  content.appendChild(wrap);
+  document.adoptedStyleSheets = [sheet];
   for (const img of content.querySelectorAll('img')) { const s = img.getAttribute('src'); if (s && !/^(data|blob):/i.test(s)) img.src = await assetUrl(resolvePath(chDir, s)); }
   for (const im of content.querySelectorAll('image')) {
     const h = im.getAttribute('href') || im.getAttributeNS('http://www.w3.org/1999/xlink', 'href');
@@ -809,7 +1087,7 @@ async function showChapter(idx, frac = 0, target = null) {
   paintHighlights();
   let hitEl = null;
   if (target && target.search) {
-    const els = wrapRange(content, target.search.start, target.search.start + target.search.len, () => { const m = document.createElement('mark'); m.className = 'hit'; return m; });
+    const els = wrapRange(content, target.search.start, target.search.start + target.search.len, () => { const m = document.createElement('mark'); m.className = 'hit'; return m; }); R.nodes = null;
     hitEl = els[0] || null;
   }
   const n = R.book.spine.length;
@@ -824,14 +1102,18 @@ async function showChapter(idx, frac = 0, target = null) {
     let el = hitEl;
     if (!el && target && target.hl) el = content.querySelector(`mark.hl[data-id="${CSS.escape(target.hl)}"]`);
     if (!el && target && target.frag) { try { el = content.querySelector('#' + CSS.escape(target.frag)) || content.querySelector(`[name="${CSS.escape(target.frag)}"]`); } catch {} }
-    if (el) goToElement(el); else setFrac(target && target.last ? 1 : frac);
+    if (el) goToElement(el); else if (!(target && target.off != null && goToOffset(target.off))) setFrac(target && target.last ? 1 : frac);
   };
   place();
   await Promise.all([...content.querySelectorAll('img')].map(i => i.decode ? i.decode().catch(() => {}) : null));
   if (state.reader === R && seq === R.seq) { place(); updateStatus(); }
 }
 
-function computeWords() { const R = state.reader; if (!R) return; const t = $('#content').textContent.trim(); R.words = t ? t.split(/\s+/).length : 0; }
+function computeWords() {
+  const R = state.reader; if (!R) return; const t = $('#content').textContent.trim(); R.words = t ? t.split(/\s+/).length : 0;
+  if (R.words > 300) R.wpb = R.wpb === WPB ? R.words / R.book.sizes[R.idx] : R.wpb * 0.7 + 0.3 * R.words / R.book.sizes[R.idx];
+}
+const WPB = 0.14; // words per byte of XHTML until a real section has been measured
 
 /* ---------- reader: layout and position ---------- */
 function layout() {
@@ -891,30 +1173,32 @@ function turn(dir) {
 }
 function toggleChrome() {
   const R = state.reader; if (!R) return;
-  const f = R.frac;
   R.immersive = !R.immersive; $('#reader').classList.toggle('immersive', R.immersive);
   setStatusBar();
-  requestAnimationFrame(() => relayout(f));
 }
 
 let saveT = 0;
 function savePos(now) {
   const R = state.reader; if (!R) return;
   if (R.fixed && !R.doc) return;
-  const write = () => LS.set('reflow:pos:' + R.rec.id, R.fixed ? { fixed: true, page: R.fpage, frac: +(R.ffrac || 0).toFixed(4), total: R.doc.n } : { idx: R.idx, frac: +R.frac.toFixed(4), total: R.book.spine.length });
+  const write = () => LS.set('reflow:pos:' + R.rec.id, R.fixed ? { fixed: true, page: R.fpage, frac: +(R.ffrac || 0).toFixed(4), total: R.doc.n, p: +(R.overall || 0).toFixed(4) } : { idx: R.idx, frac: +R.frac.toFixed(4), total: R.book.spine.length, p: +(R.overall || 0).toFixed(4) });
   clearTimeout(saveT); if (now) write(); else saveT = setTimeout(write, 600);
 }
 function updateStatus() {
   const R = state.reader; if (!R) return;
   if (R.fixed) return fxStatus();
   R.frac = getFrac();
-  const n = R.book.spine.length; const overall = (R.idx + R.frac) / n;
+  const n = R.book.spine.length, sz = R.book.sizes, total = sz.reduce((a, b) => a + b, 0);
+  const before = sz.slice(0, R.idx).reduce((a, b) => a + b, 0);
+  const overall = R.idx === n - 1 && R.frac >= 0.999 ? 1 : (before + sz[R.idx] * R.frac) / total; R.overall = overall;
   $('#r-track').style.width = (overall * 100).toFixed(2) + '%';
   const left = Math.ceil((R.words * (1 - R.frac)) / 230);
   const mins = left <= 0 ? 'end of section' : left === 1 ? 'about 1 min left' : `about ${left} min left`;
   const where = prefs.layout === 'pages' ? `Page ${R.page + 1} of ${R.pages} · Section ${R.idx + 1} of ${n}` : `Section ${R.idx + 1} of ${n}`;
   $('#r-where').textContent = `${where} · ${mins}`;
-  $('#r-pct').textContent = Math.round(overall * 100) + '%';
+  // the rest of the book: bytes left × words per byte (learned from sections read so far), at 230 words a minute
+  const bookMin = Math.round(total * (1 - overall) * R.wpb / 230);
+  $('#r-pct').textContent = Math.round(overall * 100) + '%' + (bookMin >= 2 ? ` · ${fmtDur(bookMin * 60000)} left` : '');
   $('#r-mini').textContent = (prefs.layout === 'pages' ? `${R.page + 1} / ${R.pages} · ` : '') + Math.round(overall * 100) + '%';
   $('#r-bm-btn').setAttribute('aria-pressed', String(!!currentBookmark()));
   savePos(false);
@@ -926,6 +1210,8 @@ let rzT = 0;
 window.addEventListener('resize', () => { clearTimeout(rzT); rzT = setTimeout(() => { if (state.reader) relayout(); }, 150); });
 
 /* gestures */
+// +1 when the right side of the screen means "forward"; -1 in right-to-left books
+const side = () => (state.reader && state.reader.book && state.reader.book.rtl ? -1 : 1);
 const hasSelection = () => { const s = getSelection(); return !!(s && !s.isCollapsed && s.toString().trim()); };
 let touch = null, swiped = false;
 const sc0 = $('#scroller');
@@ -933,18 +1219,21 @@ sc0.addEventListener('touchstart', e => { if (e.touches.length !== 1) { touch = 
 sc0.addEventListener('touchend', e => {
   if (!touch || prefs.layout !== 'pages' || !state.reader) { touch = null; return; }
   const t = e.changedTouches[0]; const dx = t.clientX - touch.x, dy = t.clientY - touch.y; touch = null;
-  if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.4 && !hasSelection()) { swiped = true; turn(dx < 0 ? 1 : -1); setTimeout(() => swiped = false, 400); }
+  if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.4 && !hasSelection()) { swiped = true; turn((dx < 0 ? 1 : -1) * side()); setTimeout(() => swiped = false, 400); }
 });
 sc0.addEventListener('click', e => {
   if (swiped || !state.reader || hasSelection()) return;
   const m = e.target.closest('mark.hl'); if (m) { openNote(m.dataset.id); return; }
-  if (e.target.closest('a[href]')) return;
+  const lk = e.target.closest('a, area'); if (lk && linkHref(lk)) return;
   const r = sc0.getBoundingClientRect(); const fx = (e.clientX - r.left) / r.width;
-  if (prefs.layout === 'pages' && fx < 0.28) turn(-1);
-  else if (prefs.layout === 'pages' && fx > 0.72) turn(1);
+  if (prefs.layout === 'pages' && fx < 0.28) turn(-side());
+  else if (prefs.layout === 'pages' && fx > 0.72) turn(side());
   else if (fx >= 0.28 && fx <= 0.72) toggleChrome();
 });
-sc0.addEventListener('wheel', e => { if (prefs.layout !== 'pages' || !state.reader) return; e.preventDefault(); if (Math.abs(e.deltaY) + Math.abs(e.deltaX) > 20) turn((e.deltaY || e.deltaX) > 0 ? 1 : -1); }, { passive: false });
+// one trackpad swipe sends dozens of wheel events: turn at most one page per gesture
+let wheelT = 0;
+const wheelTurn = (e, fn) => { if (Math.abs(e.deltaY) + Math.abs(e.deltaX) <= 20) return; const now = Date.now(), quiet = now - wheelT > 350; wheelT = now; if (quiet) fn((e.deltaY || e.deltaX) > 0 ? 1 : -1); };
+sc0.addEventListener('wheel', e => { if (prefs.layout !== 'pages' || !state.reader) return; e.preventDefault(); wheelTurn(e, turn); }, { passive: false });
 
 const OPS_NS = 'http://www.idpf.org/2007/ops';
 function epubType(el) {
@@ -970,12 +1259,11 @@ async function findTarget(path, frag) {
 }
 let fnJump = null;
 function showNote(target, path, frag) {
-  const box = noteBox(target).cloneNode(true);
+  const box = sanitize(noteBox(target).cloneNode(true));
   box.querySelectorAll('[role~="doc-backlink"]').forEach(x => x.remove());
   box.querySelectorAll('[id]').forEach(x => x.removeAttribute('id'));
-  box.querySelectorAll('*').forEach(x => { for (const at of [...x.attributes]) if (/^on/i.test(at.name)) x.removeAttribute(at.name); });
+  box.querySelectorAll('a, area').forEach(x => { x.removeAttribute('href'); x.removeAttributeNS(XLINK, 'href'); });
   const body = $('#fn-body'); body.replaceChildren(document.importNode(box, true));
-  body.querySelectorAll('a[href]').forEach(x => x.removeAttribute('href'));
   closeSheets(); hideSel();
   fnJump = { path, frag };
   $('#fnbox').hidden = false; $('#scrim').hidden = false;
@@ -988,9 +1276,10 @@ $('#fn-go').addEventListener('click', () => {
 });
 
 $('#content').addEventListener('click', async e => {
-  const a = e.target.closest('a[href]'); const R = state.reader; if (!a || !R) return;
-  const h = a.getAttribute('href');
-  if (/^https?:/i.test(h)) { a.target = '_blank'; a.rel = 'noopener'; return; }
+  // SVG links use xlink:href and image maps use <area>: without handling them here, a tap would navigate the app away
+  const a = e.target.closest('a, area'); const R = state.reader; if (!a || !R) return;
+  const h = linkHref(a); if (!h) return;
+  if (/^https?:/i.test(h)) { a.setAttribute('target', '_blank'); a.setAttribute('rel', 'noopener'); return; }
   e.preventDefault();
   const [p0, frag = ''] = h.split('#');
   const path = p0 ? resolvePath(dirOf(R.path), p0) : R.path;
@@ -1008,8 +1297,10 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape') { if (anySheetOpen()) closeSheets(); else closeReader(); return; }
   if (e.target.closest && e.target.closest('input,select,textarea')) return;
   if (anySheetOpen()) return;
-  if (['ArrowRight', 'PageDown', ' '].includes(e.key)) { e.preventDefault(); turn(1); }
-  if (['ArrowLeft', 'PageUp'].includes(e.key)) { e.preventDefault(); turn(-1); }
+  if (e.key === 'ArrowRight') { e.preventDefault(); turn(side()); }
+  if (e.key === 'ArrowLeft') { e.preventDefault(); turn(-side()); }
+  if (e.key === 'PageDown' || (e.key === ' ' && !e.shiftKey)) { e.preventDefault(); turn(1); }
+  if (e.key === 'PageUp' || (e.key === ' ' && e.shiftKey)) { e.preventDefault(); turn(-1); }
 });
 window.addEventListener('pagehide', () => savePos(true));
 
@@ -1025,12 +1316,23 @@ function checkSel() {
 function hideSel() { $('#selbar').hidden = true; }
 async function addHighlight(color) {
   const R = state.reader; const s = getSelection(); if (!R || !s || !s.rangeCount) return null;
-  const r = s.getRangeAt(0); const c = $('#content');
-  if (!c.contains(r.commonAncestorContainer)) return null;
-  const start = offsetOf(c, r.startContainer, r.startOffset), end = offsetOf(c, r.endContainer, r.endOffset);
-  const text = r.toString().replace(/\s+/g, ' ').trim();
+  const r = s.getRangeAt(0);
+  let c, where, end;
+  if (R.fixed) {
+    // a selection across two pages is kept to the page where it starts
+    const n0 = r.startContainer.nodeType === 1 ? r.startContainer : r.startContainer.parentElement;
+    c = n0 && n0.closest('.textLayer'); if (!c || !fxBox().contains(c)) return null;
+    where = { page: +c.parentElement.dataset.i };
+    end = c.contains(r.endContainer) ? offsetOf(c, r.endContainer, r.endOffset) : c.textContent.length;
+  } else {
+    c = $('#content'); if (!c.contains(r.commonAncestorContainer)) return null;
+    where = { idx: R.idx };
+    end = offsetOf(c, r.endContainer, r.endOffset);
+  }
+  const start = offsetOf(c, r.startContainer, r.startOffset);
+  const text = (c.contains(r.endContainer) ? r.toString() : c.textContent.slice(start, end)).replace(/\s+/g, ' ').trim();
   if (end - start < 1 || !text) return null;
-  const m = { id: uuid(), bookId: R.rec.id, kind: 'hl', idx: R.idx, start, end, text, note: '', color, created: Date.now() };
+  const m = { id: uuid(), bookId: R.rec.id, kind: 'hl', ...where, start, end, text, note: '', color, created: Date.now() };
   await DB.putMark(m); R.marks.push(m);
   s.removeAllRanges(); hideSel(); paintHighlights();
   return m;
@@ -1140,12 +1442,50 @@ $('#sel-copy').addEventListener('click', async () => {
 });
 
 /* ---------- bookmarks ---------- */
+/* EPUB bookmarks remember the first character on screen (a text offset, like highlights), so they still point at
+   the same words after the text size or line width changes. Bookmarks from older versions only have frac. */
+function textIndex() { // text nodes of the chapter with their start offsets; rebuilt after highlights split nodes
+  const R = state.reader;
+  if (!R.nodes) { let pos = 0; R.nodes = textNodes($('#content')).map(n => { const e = { n, at: pos }; pos += n.data.length; return e; }); }
+  return R.nodes;
+}
+function rectAt(off) {
+  const idx = textIndex(); let lo = 0, hi = idx.length - 1;
+  if (hi < 0) return null;
+  while (lo < hi) { const m = (lo + hi + 1) >> 1; if (idx[m].at <= off) lo = m; else hi = m - 1; }
+  const { n, at } = idx[lo]; const k = Math.max(0, Math.min(n.data.length - 1, off - at));
+  const r = document.createRange(); r.setStart(n, k); r.setEnd(n, Math.min(n.data.length, k + 1));
+  const rc = r.getClientRects()[0] || r.getBoundingClientRect(); return rc && (rc.width || rc.height) ? rc : null;
+}
+function pageOfRect(rc) { const R = state.reader; return Math.floor((rc.left + 1 - $('#content').getBoundingClientRect().left) / R.W); }
+function firstVisibleOffset() {
+  const R = state.reader, sc = $('#scroller').getBoundingClientRect();
+  const after = rc => prefs.layout === 'pages' ? pageOfRect(rc) >= R.page : rc.bottom > sc.top + 2; // true from the first visible character on
+  const idx = textIndex().filter(e => /\S/.test(e.n.data));
+  const first = e => { const r = document.createRange(); r.selectNodeContents(e.n); const rs = [...r.getClientRects()]; return rs.length ? rs[rs.length - 1] : null; };
+  let lo = 0, hi = idx.length - 1, hit = -1;
+  while (lo <= hi) { const m = (lo + hi) >> 1; const rc = first(idx[m]); if (rc && after(rc)) { hit = m; hi = m - 1; } else lo = m + 1; } // first node that reaches the screen
+  if (hit < 0) return null;
+  const { n, at } = idx[hit]; let a = 0, b = n.data.length - 1;
+  while (a < b) { const m = (a + b) >> 1; const r = document.createRange(); r.setStart(n, m); r.setEnd(n, m + 1); const rc = r.getClientRects()[0]; if (rc && after(rc)) b = m; else a = m + 1; }
+  return at + a;
+}
+function bmOnScreen(m) {
+  const R = state.reader;
+  if (m.off == null) return prefs.layout === 'pages' ? Math.round(m.frac * (R.pages - 1)) === R.page : Math.abs(m.frac - R.frac) < 0.02;
+  const rc = rectAt(m.off); if (!rc) return false;
+  if (prefs.layout === 'pages') return pageOfRect(rc) === R.page;
+  const sc = $('#scroller').getBoundingClientRect(); return rc.top >= sc.top - 2 && rc.top < sc.bottom - 2;
+}
+function goToOffset(off) {
+  const R = state.reader, sc = $('#scroller'); const rc = rectAt(off); if (!rc) return false;
+  if (prefs.layout === 'pages') goPage(pageOfRect(rc)); else { sc.scrollTop += rc.top - sc.getBoundingClientRect().top - 24; updateStatus(); }
+  return true;
+}
 function currentBookmark() {
   const R = state.reader; if (!R) return null;
   if (R.fixed) return R.marks.find(m => m.kind === 'bm' && m.page === R.fpage) || null;
-  return R.marks.find(m => m.kind === 'bm' && m.idx === R.idx && (prefs.layout === 'pages'
-    ? Math.round(m.frac * (R.pages - 1)) === R.page
-    : Math.abs(m.frac - R.frac) < 0.02)) || null;
+  return R.marks.find(m => m.kind === 'bm' && m.idx === R.idx && bmOnScreen(m)) || null;
 }
 function visibleSnippet() {
   const sc = $('#scroller').getBoundingClientRect();
@@ -1163,7 +1503,7 @@ async function toggleBookmark() {
   else {
     const m = R.fixed
       ? { id: uuid(), bookId: R.rec.id, kind: 'bm', page: R.fpage, frac: R.ffrac, text: fxOutlineAt(R.fpage), created: Date.now() }
-      : { id: uuid(), bookId: R.rec.id, kind: 'bm', idx: R.idx, frac: R.frac, text: visibleSnippet(), created: Date.now() };
+      : { id: uuid(), bookId: R.rec.id, kind: 'bm', idx: R.idx, frac: R.frac, off: firstVisibleOffset(), text: visibleSnippet(), created: Date.now() };
     await DB.putMark(m); R.marks.push(m); toast('Bookmarked.');
   }
   updateStatus();
@@ -1172,7 +1512,7 @@ async function toggleBookmark() {
 /* ---------- marks list and export ---------- */
 function sortedMarks() {
   const R = state.reader;
-  if (R.fixed) return [...R.marks].filter(m => m.page != null).sort((a, b) => (a.page - b.page) || (a.frac - b.frac));
+  if (R.fixed) return [...R.marks].filter(m => m.page != null).sort((a, b) => (a.page - b.page) || ((a.kind === 'hl' ? a.start / 1e7 : a.frac || 0) - (b.kind === 'hl' ? b.start / 1e7 : b.frac || 0)));
   return [...R.marks].sort((a, b) => (a.idx - b.idx) || ((a.kind === 'hl' ? a.start / 1e7 : a.frac) - (b.kind === 'hl' ? b.start / 1e7 : b.frac)));
 }
 function renderMarks() {
@@ -1182,7 +1522,7 @@ function renderMarks() {
   const nh = ms.filter(m => m.kind === 'hl').length, nb = ms.length - nh;
   $('#marks-count').textContent = `${nh} highlight${nh === 1 ? '' : 's'} · ${nb} bookmark${nb === 1 ? '' : 's'}`;
   $('#marks-share').hidden = !ms.length;
-  if (!ms.length) { const p = document.createElement('p'); p.className = 'pane-note'; p.textContent = R.fixed ? 'Tap the bookmark button at the top to mark a page.' : 'Select text to highlight it, or tap the bookmark button at the top to mark a page.'; list.append(p); return; }
+  if (!ms.length) { const p = document.createElement('p'); p.className = 'pane-note'; p.textContent = R.fixed ? (R.kind === 'pdf' ? 'Select text to highlight it, or tap the bookmark button at the top to mark a page.' : 'Tap the bookmark button at the top to mark a page.') : 'Select text to highlight it, or tap the bookmark button at the top to mark a page.'; list.append(p); return; }
   for (const m of ms) {
     const b = document.createElement('button'); b.type = 'button';
     b.className = 'mark-item ' + (m.kind === 'hl' ? 'c-' + (m.color || 'yellow') : 'bm');
@@ -1190,7 +1530,13 @@ function renderMarks() {
     const q = document.createElement('span'); q.className = 'q'; q.textContent = m.text || (R.fixed ? `Page ${m.page + 1}` : '(page)');
     b.append(s, q);
     if (m.note) { const nt = document.createElement('span'); nt.className = 'n'; nt.textContent = m.note; b.append(nt); }
-    b.addEventListener('click', () => { closeSheets(); if (R.fixed) fxGo(m.page, fxPaged() ? 0 : m.frac); else if (m.kind === 'hl') showChapter(m.idx, 0, { hl: m.id }); else showChapter(m.idx, m.frac); });
+    b.addEventListener('click', () => {
+      closeSheets();
+      if (R.fixed) {
+        if (m.kind === 'hl') { R.hlGo = m.id; fxGo(m.page, 0); const mk = fxList().querySelector(`mark.hl[data-id="${CSS.escape(m.id)}"]`); if (mk) { R.hlGo = null; fxReveal(mk); } }
+        else fxGo(m.page, fxPaged() ? 0 : m.frac);
+      } else if (m.kind === 'hl') showChapter(m.idx, 0, { hl: m.id }); else showChapter(m.idx, m.frac, m.off != null ? { off: m.off } : null);
+    });
     list.append(b);
   }
 }
@@ -1198,7 +1544,11 @@ $('#marks-share').addEventListener('click', () => {
   const R = state.reader; if (!R) return;
   let md = `# ${R.rec.title}\n\n`; let last = -1;
   for (const m of sortedMarks()) {
-    if (R.fixed) { md += `- Page ${m.page + 1}${m.text ? ' · ' + m.text : ''}\n`; continue; }
+    if (R.fixed) {
+      if (m.kind === 'hl') { md += `> ${m.text}\n\n— page ${m.page + 1}\n\n`; if (m.note) md += `Note: ${m.note}\n\n`; }
+      else md += `Bookmark: page ${m.page + 1}${m.text ? ' · ' + m.text : ''}\n\n`;
+      continue;
+    }
     if (m.idx !== last) { md += `## ${tocTitleFor(m.idx)}\n\n`; last = m.idx; }
     if (m.kind === 'hl') { md += `> ${m.text}\n\n`; if (m.note) md += `Note: ${m.note}\n\n`; }
     else md += `Bookmark: ${m.text || 'page'}\n\n`;
@@ -1276,11 +1626,12 @@ async function pdfAdapter(blob) {
     async realSizes(onChange) { // pages can differ in size; fix them up quietly in the background
       let changed = false;
       for (let i = 1; i < n; i++) {
-        if (!state.reader || state.reader.doc !== A) return;
+        if (!state.reader || state.reader.doc !== A) return false;
         try { const p = await pdf.getPage(i + 1); const v = p.getViewport({ scale: 1 }); if (Math.abs(v.width - sizes[i].w) > 1 || Math.abs(v.height - sizes[i].h) > 1) { sizes[i] = { w: v.width, h: v.height }; changed = true; } } catch {}
         if (changed && (i % 25 === 0 || i === n - 1)) { onChange(); changed = false; }
         if (i % 10 === 0) await tick();
       }
+      return true;
     },
     async render(i, el, cssW, cssH) {
       const page = await pdf.getPage(i + 1);
@@ -1342,25 +1693,24 @@ async function djvuAdapter(blob) {
   const urls = new Map();
   const A = {
     kind: 'djvu', n: sizes.length, sizes, text: false,
-    async render(i, el) {
-      if (urls.has(i)) return;
-      const r = await w.doc.getPage(i + 1).createPngObjectUrl().run();
-      if (!r || !r.url) return;
-      urls.set(i, r.url);
-      const img = document.createElement('img'); img.className = 'pg'; img.alt = ''; img.decoding = 'async'; img.src = r.url;
-      try { await img.decode(); } catch {}
-      el.querySelectorAll('img.pg').forEach(x => x.remove());
-      el.append(img);
-    },
-    async sample(i, W) {
-      const r = await w.doc.getPage(i + 1).createPngObjectUrl().run();
-      const img = new Image(); img.src = r.url; await img.decode();
-      const c = document.createElement('canvas'); c.width = W; c.height = Math.round(img.naturalHeight * W / img.naturalWidth);
-      const ctx = c.getContext('2d', { willReadFrequently: true }); ctx.fillStyle = '#FFFFFF'; ctx.fillRect(0, 0, c.width, c.height); ctx.drawImage(img, 0, 0, c.width, c.height);
-      try { w.revokeObjectURL(r.url); } catch {}
+    // The worker hands over the decoded page as raw pixels (transferred, not copied); it is scaled once to the size on
+    // screen. Encoding a scan of several megapixels as PNG and decoding it again took most of the time before.
+    async draw(i, W, opts) {
+      const id = await w.doc.getPage(i + 1).getImageData().run();
+      const tw = Math.max(1, Math.min(id.width, Math.round(W))), th = Math.max(1, Math.round(id.height * tw / id.width));
+      const c = document.createElement('canvas'); c.width = tw; c.height = th;
+      const ctx = c.getContext('2d', opts); ctx.fillStyle = '#FFFFFF'; ctx.fillRect(0, 0, tw, th);
+      const bmp = await createImageBitmap(id, { resizeWidth: tw, resizeHeight: th, resizeQuality: 'high' });
+      ctx.drawImage(bmp, 0, 0); bmp.close();
       return c;
     },
-    release(i, el) { el.querySelectorAll('img.pg').forEach(x => x.remove()); const u = urls.get(i); if (u) { urls.delete(i); try { w.revokeObjectURL(u); } catch {} } },
+    async render(i, el, cssW) {
+      const c = await A.draw(i, cssW * Math.min(window.devicePixelRatio || 1, 3), { alpha: false });
+      el.querySelectorAll('canvas,img.pg').forEach(x => { if (x.localName === 'canvas') x.width = x.height = 0; x.remove(); });
+      el.append(c);
+    },
+    sample(i, W) { return A.draw(i, W, { willReadFrequently: true }); },
+    release(i, el) { el.querySelectorAll('canvas').forEach(c => { c.width = c.height = 0; }); el.querySelectorAll('canvas,img.pg').forEach(x => x.remove()); },
     async pageText(i) { try { return (await w.doc.getPage(i + 1).getText().run()) || ''; } catch { return ''; } },
     async toc() {
       let c; try { c = await w.doc.getContents().run(); } catch { return []; }
@@ -1382,7 +1732,7 @@ async function djvuAdapter(blob) {
 
 async function openFixed(b) {
   const marks = await DB.marksFor(b.id);
-  const R = { rec: b, fixed: true, kind: b.format, doc: null, marks, z: 1, zPage: -1, fpage: 0, ffrac: 0, frac: 0, immersive: isNative && prefs.full, seq: 0, texts: new Map(), toc: [], rendered: new Map(), queue: [], busy: false, hit: null, tops: [], ph: [], pw: [], fw: [], fh: [], crop: null, words: 0 };
+  const R = { rec: b, fixed: true, kind: b.format, doc: null, marks, z: 1, zPage: -1, fpage: 0, ffrac: 0, frac: 0, immersive: true, seq: 0, texts: new Map(), toc: [], rendered: new Map(), queue: [], busy: false, hit: null, tops: [], ph: [], pw: [], fw: [], fh: [], crop: null, words: 0 };
   state.reader = R;
   const rd = $('#reader');
   rd.classList.add('fixed'); rd.classList.toggle('immersive', R.immersive);
@@ -1408,12 +1758,24 @@ async function openFixed(b) {
   }
   const pos = LS.get('reflow:pos:' + b.id, null);
   const start = pos && pos.fixed ? { page: Math.min(pos.page, R.doc.n - 1), frac: pos.frac || 0 } : { page: 0, frac: 0 };
+  // page sizes and trim margins found on an earlier open: applied before the first layout, so the page doesn't jump
+  const fc = b.fx && b.fx.n === R.doc.n ? b.fx : null;
+  if (fc) { for (const [i, w, h] of fc.sizes || []) if (R.doc.sizes[i]) R.doc.sizes[i] = { w, h }; if (fc.cropDone) R.crop = fc.crop; }
   fxLayout(start);
   if (R.immersive && !LS.get('reflow:tipChrome', false)) { LS.set('reflow:tipChrome', true); toast('Tap the middle of the page for the menu. Pinch or double-tap to zoom.', 4500); }
   fxBox().focus({ preventScroll: true });
   R.doc.toc().then(t => { if (state.reader === R) { R.toc = t; buildToc(); fxStatus(); } }).catch(() => {});
-  setTimeout(() => { if (state.reader === R) fxDetectCrop(R); }, 700);
-  if (R.doc.realSizes) R.doc.realSizes(() => { if (state.reader === R) fxLayout({ page: R.fpage, frac: R.ffrac }); });
+  if (!(fc && fc.cropDone)) setTimeout(() => { if (state.reader === R) fxDetectCrop(R); }, 700);
+  if (R.doc.realSizes && !(fc && fc.sized)) R.doc.realSizes(() => { if (state.reader === R) fxLayout({ page: R.fpage, frac: R.ffrac }); }).then(done => {
+    if (!done || state.reader !== R) return;
+    const s0 = R.doc.sizes[0];
+    saveFx(R, { sized: true, sizes: R.doc.sizes.map((z, i) => [i, z.w, z.h]).filter(([, w, h]) => Math.abs(w - s0.w) > 1 || Math.abs(h - s0.h) > 1) });
+  }).catch(() => {});
+}
+function saveFx(R, patch) {
+  const b = R.rec; if (b.id === 'sample') return;
+  b.fx = Object.assign({ n: R.doc.n }, b.fx && b.fx.n === R.doc.n ? b.fx : {}, patch);
+  DB.put(b); // details only, so this is cheap
 }
 
 function fxLayout(anchor) {
@@ -1523,9 +1885,10 @@ async function fxDetectCrop(R) {
     return p;
   };
   const a = fix(merge(boxes[0]) || merge(boxes[1])), b = fix(merge(boxes[1]) || merge(boxes[0]));
-  if (state.reader !== R || (!a && !b)) return;
-  R.crop = [a || b, b || a];
-  if (prefs.trim) fxLayout({ page: R.fpage, frac: R.ffrac });
+  if (state.reader !== R) return;
+  R.crop = a || b ? [a || b, b || a] : null;
+  saveFx(R, { crop: R.crop, cropDone: true });
+  if (R.crop && prefs.trim) fxLayout({ page: R.fpage, frac: R.ffrac });
 }
 
 /* rendering: visible pages first, then neighbours; far pages are released */
@@ -1565,12 +1928,21 @@ async function fxDrain() {
   try {
     while (state.reader === R && R.queue.length) {
       const i = R.queue.shift();
-      const key = R.kind === 'djvu' ? 1 : Math.round(R.fw[i]);
+      const key = Math.round(R.fw[i]);
       if (R.rendered.get(i) === key) continue;
       const el = fxList().children[i].firstChild;
-      try { await R.doc.render(i, el, R.fw[i], R.fh[i]); R.rendered.set(i, key); if (R.hit && R.hit.page === i) markHits(el); } catch (e) { if (!/cancel/i.test(String(e && (e.name || e.message)))) R.rendered.set(i, key); }
+      try {
+        await R.doc.render(i, el, R.fw[i], R.fh[i]); R.rendered.set(i, key); paintFx(i);
+        if (R.hit && R.hit.page === i) markHits(el);
+        if (R.hlGo) { const mk = el.querySelector(`mark.hl[data-id="${CSS.escape(R.hlGo)}"]`); if (mk) { R.hlGo = null; fxReveal(mk); } }
+      } catch (e) { if (!/cancel/i.test(String(e && (e.name || e.message)))) R.rendered.set(i, key); }
     }
   } finally { R.busy = false; }
+}
+function fxReveal(node) { // scroll so a search hit or highlight on the current page is in view
+  if (fxPaged()) return;
+  const fx = fxBox(); const r = node.getBoundingClientRect(), b = fx.getBoundingClientRect();
+  if (r.top < b.top + 40 || r.bottom > b.bottom - 40) fx.scrollBy({ top: r.top - b.top - fx.clientHeight * 0.3, behavior: 'instant' });
 }
 function markHits(el) {
   const R = state.reader; if (!R || !R.hit) return;
@@ -1579,17 +1951,14 @@ function markHits(el) {
     const t = s.textContent.toLowerCase(); if (!t.trim()) continue;
     if (t.includes(q) || (t.trim().length >= 3 && q.includes(t.trim()))) { s.classList.add('hit'); if (!first) first = s; }
   }
-  if (first && !fxPaged()) {
-    const fx = fxBox(); const r = first.getBoundingClientRect(), b = fx.getBoundingClientRect();
-    if (r.top < b.top + 40 || r.bottom > b.bottom - 40) fx.scrollBy({ top: r.top - b.top - fx.clientHeight * 0.3, behavior: 'instant' });
-  }
+  if (first) fxReveal(first);
 }
 
 function fxOutlineAt(p) { const R = state.reader; let t = null; for (const e of R.toc) if (e.page != null && e.page <= p && e.depth === 0) t = e; return t ? t.title : ''; }
 function fxStatus() {
   const R = state.reader; if (!R || !R.fixed) return;
   const c = fxCurrent(); R.fpage = c.page; R.ffrac = c.frac; R.frac = c.frac;
-  const n = R.doc.n, overall = Math.min(1, (c.page + (fxPaged() ? 1 : c.frac)) / n);
+  const n = R.doc.n, overall = Math.min(1, (c.page + (fxPaged() ? 1 : c.frac)) / n); R.overall = overall;
   $('#r-track').style.width = (overall * 100).toFixed(2) + '%';
   const sec = fxOutlineAt(c.page);
   $('#r-t2').textContent = sec || `${R.kind === 'pdf' ? 'PDF' : 'DjVu'} · ${fmt(n)} pages`;
@@ -1682,6 +2051,7 @@ $('#fx-goto').addEventListener('submit', e => {
   fx.addEventListener('click', e => {
     const R = state.reader; if (!R || !R.fixed || hasSelection()) return;
     if (moved) { moved = false; return; }
+    const mk = e.target.closest('mark.hl'); if (mk) { lastTap = null; clearTimeout(tapT); openNote(mk.dataset.id); return; }
     const r = fx.getBoundingClientRect(); const fxX = (e.clientX - r.left) / r.width;
     const edge = fxPaged() && (fxX < 0.28 || fxX > 0.72);
     if (edge && !(R.zPage >= 0)) { lastTap = null; fxTurn(fxX < 0.28 ? -1 : 1); return; }
@@ -1699,7 +2069,7 @@ $('#fx-goto').addEventListener('submit', e => {
   fx.addEventListener('wheel', e => {
     const R = state.reader; if (!R || !R.fixed) return;
     if (e.ctrlKey) { e.preventDefault(); setZoom(R.z * (e.deltaY < 0 ? 1.12 : 1 / 1.12), e.clientX, e.clientY); return; }
-    if (fxPaged() && !(R.zPage >= 0)) { e.preventDefault(); if (Math.abs(e.deltaY) + Math.abs(e.deltaX) > 20) fxTurn((e.deltaY || e.deltaX) > 0 ? 1 : -1); }
+    if (fxPaged() && !(R.zPage >= 0)) { e.preventDefault(); wheelTurn(e, fxTurn); }
   }, { passive: false });
 })();
 
@@ -1781,7 +2151,7 @@ function hush() { const E = ttsEngine(); if (E) { try { E.stop().catch(() => {})
 const BLOCKS = 'p,h1,h2,h3,h4,h5,h6,li,blockquote,dd,dt,figcaption,td,th,pre';
 function epubItems(fromVisible) {
   const c = $('#content'); const sc = $('#scroller').getBoundingClientRect();
-  const els = [...c.querySelectorAll(BLOCKS)].filter(el => !el.querySelector(BLOCKS) && !el.closest('section.footnotes, aside, nav'));
+  const els = [...c.querySelectorAll(BLOCKS)].filter(el => !el.querySelector(BLOCKS) && !el.closest('section.b-footnotes, aside, nav'));
   let start = 0;
   if (fromVisible) {
     start = els.findIndex(el => { for (const r of el.getClientRects()) if (r.bottom > sc.top + 4 && r.top < sc.bottom - 4 && r.right > sc.left + 2 && r.left < sc.right - 2) return true; return false; });
@@ -1814,6 +2184,7 @@ function ttsMark(it) {
   if (!visible) goToElement(it.el);
 }
 function ttsUi() {
+  syncVolume();
   $('#ttsbar').hidden = !TTS.on;
   $('#r-tts-btn').setAttribute('aria-pressed', String(TTS.on));
   $('#tts-play').innerHTML = TTS.playing ? '<svg viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></svg>' : '<svg viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z" fill="currentColor"/></svg>';
@@ -1912,7 +2283,7 @@ async function boot() {
           if (anySheetOpen()) closeSheets();
           else if (!$('#selbar').hidden) { getSelection().removeAllRanges(); hideSel(); }
           else if (state.reader.fixed && state.reader.z > 1.01) setZoom(1);
-          else if (state.reader.immersive) toggleChrome();
+          else if (!state.reader.immersive) toggleChrome();
           else closeReader();
         } else if (lsheetOpen()) closeLSheets();
         else if (lib.q) { lib.q = ''; $('#lib-q').value = ''; renderGrid(); }
@@ -1924,6 +2295,7 @@ async function boot() {
     try {
       if (N) {
         N.addListener('incoming', pullIncoming);
+        N.addListener('receiving', () => toast('Receiving the file…', 60000));
         N.addListener('volume', ev => { if (state.reader && !anySheetOpen()) turn(ev && ev.dir < 0 ? -1 : 1); });
         pullIncoming();
       }

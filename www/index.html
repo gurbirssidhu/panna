@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
+<!-- Book content is inserted into this page, so the policy is the main guard against scripts or network requests hidden in a book:
+     no inline or injected scripts, nothing loaded from other origins. DjVu.js starts its worker from a blob: URL. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self' blob: data:; connect-src 'self' blob: data:; media-src 'self' blob: data:; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">
 <title>Panna</title>
 <script src="theme.js"></script>
 <style>
@@ -171,7 +174,10 @@ h1,h2,h3{text-wrap:balance}
 .reader[data-paper="sepia"]{--paper:#F5EDDF;--paper-ink:#3A2F22;--paper-muted:#7A6A55;--paper-line:#E4D7C0;--paper-accent:#8A4B14;--paper-raise:#EFE4D1}
 .reader[data-paper="night"]{--paper:#14161C;--paper-ink:#D8DBE3;--paper-muted:#8D92A2;--paper-line:#2A2E39;--paper-accent:#9DB0FF;--paper-raise:#1C1F27;
   --hl-yellow:rgba(255,214,90,.34);--hl-green:rgba(110,210,140,.30);--hl-blue:rgba(120,160,255,.34);--hl-pink:rgba(255,120,170,.30);--hit:rgba(255,150,60,.55);color-scheme:dark}
-.r-bar{display:flex;align-items:center;gap:2px;padding:6px 6px;border-bottom:1px solid var(--paper-line);font-family:var(--ui)}
+/* the bars float over the page and slide in and out, so showing the menu never resizes or re-lays out the text */
+.r-bar{position:absolute;z-index:1;left:0;right:0;top:env(safe-area-inset-top,0px);background:var(--paper);display:flex;align-items:center;gap:2px;padding:6px 6px;border-bottom:1px solid var(--paper-line);font-family:var(--ui)}
+.r-bar,.r-foot{transition:transform .2s ease,opacity .2s ease,visibility 0s}
+.r-bar{box-shadow:0 8px 18px -12px rgba(0,0,0,.35)}.r-foot{box-shadow:0 -8px 18px -12px rgba(0,0,0,.35)}
 .r-titles{min-width:0;flex:1;line-height:1.25;padding:0 4px}
 .r-titles div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .r-titles .t1{font-weight:600;font-size:.95rem}
@@ -184,19 +190,20 @@ h1,h2,h3{text-wrap:balance}
 .r-content{max-width:var(--measure);margin:0 auto;padding:28px 20px 12px;font-family:var(--face);font-size:var(--fs);line-height:var(--lh);overflow-wrap:break-word;-webkit-hyphens:auto;hyphens:auto}
 .reader[data-hyph="off"] .r-content{-webkit-hyphens:manual;hyphens:manual}
 .r-content p{margin:0 0 .9em}
-.r-content p.small{font-size:.84em;color:var(--paper-muted)}
+.r-content p.b-small{font-size:.84em;color:var(--paper-muted)}
 .r-content h1,.r-content h2,.r-content h3,.r-content h4{line-height:1.25;margin:1.4em 0 .6em;font-weight:600;break-after:avoid}
 .r-content h1{font-size:1.55em}.r-content h2{font-size:1.3em}.r-content h3{font-size:1.12em}
-.r-content>:first-child,.r-content section>:first-child{margin-top:0}
+/* book classes get a b- prefix (sanitize in app.js), so they can never pick up the app's own styles */
+.r-content>:first-child,.r-content>.bk>:first-child,.r-content section>:first-child{margin-top:0}
 .r-content a{color:var(--paper-accent)}
 .r-content img,.r-content svg{max-width:100%;height:auto}
 .r-content figure{margin:1.2em 0}
-.r-content figure.pageimg img{display:block;width:100%;border:1px solid var(--paper-line);border-radius:4px;background:#FFFFFF}
-.r-content figure.fig{text-align:center}
-.r-content figure.fig img{display:inline-block;border-radius:4px;background:#FFFFFF}
-.r-content .eq{margin:.7em 0;text-align:center}
-.r-content .eq img{display:inline-block;vertical-align:middle}
-.reader[data-paper="night"] .r-content .eq img{filter:invert(.9) hue-rotate(180deg)}
+.r-content figure.b-pageimg img{display:block;width:100%;border:1px solid var(--paper-line);border-radius:4px;background:#FFFFFF}
+.r-content figure.b-fig{text-align:center}
+.r-content figure.b-fig img{display:inline-block;border-radius:4px;background:#FFFFFF}
+.r-content .b-eq{margin:.7em 0;text-align:center}
+.r-content .b-eq img{display:inline-block;vertical-align:middle}
+.reader[data-paper="night"] .r-content .b-eq img{filter:invert(.9) hue-rotate(180deg)}
 .reader[data-paper="night"] .r-content figure img{filter:brightness(.88)}
 .r-content figcaption{font-family:var(--ui);font-size:.72em;color:var(--paper-muted);margin-top:.4em;text-align:center}
 .r-content table{display:block;overflow-x:auto;border-collapse:collapse;max-width:100%}
@@ -212,20 +219,22 @@ h1,h2,h3{text-wrap:balance}
 .r-content mark.hit{background:var(--hit)}
 .r-content sup{line-height:0}
 .r-content sup a{text-decoration:none;font-weight:700;font-family:var(--ui);font-size:.82em;padding:0 .22em;border-radius:4px;background:var(--paper-raise)}
-.r-content section.footnotes{margin-top:2em;padding-top:.8em;border-top:1px solid var(--paper-line);font-size:.86em}
-.r-content section.footnotes h2{font-size:1.15em;margin-top:0}
+.r-content section.b-footnotes{margin-top:2em;padding-top:.8em;border-top:1px solid var(--paper-line);font-size:.86em}
+.r-content section.b-footnotes h2{font-size:1.15em;margin-top:0}
 .r-content aside{margin:0 0 .6em}
-.r-content section.footnotes a[role="doc-backlink"]{font-weight:700;text-decoration:none;margin-right:.2em}
+.r-content section.b-footnotes a[role="doc-backlink"]{font-weight:700;text-decoration:none;margin-right:.2em}
 .fn-body{font-family:var(--face);font-size:calc(var(--fs) * .9);line-height:1.55;max-height:55vh;overflow-y:auto;overflow-wrap:break-word}
 .fn-body p{margin:0 0 .6em}.fn-body a{color:var(--paper-accent)}
 .reader.paged .r-scroll{overflow:hidden}
 .reader.paged .r-end{display:none}
 .reader.paged .r-content{max-width:none;margin:0;column-fill:auto}
 .reader.paged .r-content img{max-height:var(--ph);object-fit:contain}
-.reader.paged .r-content figure,.reader.paged .r-content .eq{break-inside:avoid}
-.reader.immersive .r-bar,.reader.immersive .r-foot{display:none}
-.r-mini{display:none;position:absolute;right:12px;bottom:calc(6px + env(safe-area-inset-bottom,0px));z-index:1;font-family:var(--ui);font-size:.72rem;color:var(--paper-muted);font-variant-numeric:tabular-nums;pointer-events:none;background:var(--paper);padding:1px 4px;border-radius:4px}
-.reader.immersive .r-mini{display:block}
+.reader.paged .r-content figure,.reader.paged .r-content .b-eq{break-inside:avoid}
+.reader.immersive .r-bar,.reader.immersive .r-foot{opacity:0;visibility:hidden;pointer-events:none;transition:transform .2s ease,opacity .2s ease,visibility 0s .2s}
+.reader.immersive .r-bar{transform:translateY(-100%)}
+.reader.immersive .r-foot{transform:translateY(100%)}
+.r-mini{opacity:0;transition:opacity .2s ease;position:absolute;right:12px;bottom:calc(6px + env(safe-area-inset-bottom,0px));z-index:1;font-family:var(--ui);font-size:.72rem;color:var(--paper-muted);font-variant-numeric:tabular-nums;pointer-events:none;background:var(--paper);padding:1px 4px;border-radius:4px}
+.reader.immersive .r-mini{opacity:1}
 .dict-body{max-height:58vh;overflow-y:auto;font-family:var(--ui)}
 .dict-body h3{margin:0;font-family:var(--read);font-size:1.5rem;font-weight:600}
 .dict-body .from{margin:2px 0 0;color:var(--paper-muted);font-size:.86rem}
@@ -241,7 +250,7 @@ h1,h2,h3{text-wrap:balance}
 .r-end button{border:1px solid var(--paper-line);background:transparent;color:var(--paper-ink);border-radius:10px;padding:10px 14px;font-weight:600;min-width:0;max-width:48%;text-align:left}
 .r-end button span{display:block;font-size:.78rem;color:var(--paper-muted);font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .r-end .next{margin-left:auto;text-align:right}
-.r-foot{border-top:1px solid var(--paper-line);padding:8px 14px 10px;font-family:var(--ui);font-size:.8rem;color:var(--paper-muted);font-variant-numeric:tabular-nums}
+.r-foot{position:absolute;z-index:1;left:0;right:0;bottom:env(safe-area-inset-bottom,0px);background:var(--paper);border-top:1px solid var(--paper-line);padding:8px 14px 10px;font-family:var(--ui);font-size:.8rem;color:var(--paper-muted);font-variant-numeric:tabular-nums}
 .r-foot .track{height:3px;background:var(--paper-line);border-radius:99px;overflow:hidden;margin-bottom:6px}
 .r-foot .track i{display:block;height:100%;width:0;background:var(--paper-accent)}
 .r-foot .line{display:flex;justify-content:space-between;gap:10px}
@@ -328,6 +337,10 @@ h1,h2,h3{text-wrap:balance}
 .textLayer ::selection{background:rgba(47,70,184,.35)}
 .textLayer br::selection{background:transparent}
 .textLayer .endOfContent{display:block;position:absolute;inset:100% 0 0;z-index:-1;cursor:default;user-select:none}
+/* PDF highlights sit on the invisible text layer above the page image, so they are see-through */
+.textLayer mark.hl{color:transparent;border-radius:2px;padding:0;background:rgba(255,204,0,.38)}
+.textLayer mark.hl.c-green{background:rgba(60,190,90,.32)}.textLayer mark.hl.c-blue{background:rgba(70,120,255,.30)}.textLayer mark.hl.c-pink{background:rgba(255,80,140,.30)}
+.textLayer mark.hl.has-note{box-shadow:inset 0 -2px 0 rgba(0,0,0,.45)}
 .textLayer span.hit{background:rgba(255,160,40,.45);border-radius:2px}
 .dimmer{position:absolute;inset:0;background:#000;opacity:0;pointer-events:none;z-index:2}
 .ttsbar{position:absolute;z-index:3;left:50%;transform:translateX(-50%);bottom:calc(58px + env(safe-area-inset-bottom,0px));display:flex;align-items:center;gap:4px;padding:6px 8px;border-radius:999px;background:var(--paper);border:1px solid var(--paper-line);box-shadow:0 10px 30px -12px rgba(0,0,0,.5);font-family:var(--ui)}
@@ -344,7 +357,6 @@ h1,h2,h3{text-wrap:balance}
 .zoomchip{position:absolute;left:50%;top:calc(64px + env(safe-area-inset-top,0px));transform:translateX(-50%);z-index:5;background:rgba(15,17,24,.78);color:#FFFFFF;font-family:var(--ui);font-weight:700;font-size:.82rem;padding:4px 10px;border-radius:99px;pointer-events:none;font-variant-numeric:tabular-nums}
 .reader:not(.fixed) .fx-only{display:none!important}
 .reader.fixed .epub-only{display:none!important}
-.reader.fixed .selbar .dot,.reader.fixed #sel-note{display:none}
 .toc-item small{color:var(--paper-muted);font-variant-numeric:tabular-nums;margin-left:8px;font-size:.78rem}
 .loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:var(--ui);color:var(--paper-muted);z-index:3;pointer-events:none}
 
@@ -417,7 +429,7 @@ h1,h2,h3{text-wrap:balance}
     <button class="lrow" type="button" id="restore-btn"><svg viewBox="0 0 24 24"><path d="M12 21V9M7 14l5-5 5 5M5 3h14"/></svg><span>Restore from backup<small>Adds books from a Panna or Reflow backup; nothing is overwritten</small></span></button>
   </div>
   <div class="lgroup">
-    <p class="about" id="about">Panna 1.1.0 reads EPUB, PDF and DjVu files offline. Free software under GPL-3.0. Source code and updates: <a href="https://github.com/gurbirssidhu/panna" target="_blank" rel="noopener" style="color:var(--accent)">github.com/gurbirssidhu/panna</a><br>PDF rendering: pdf.js (Apache 2.0). DjVu rendering: DjVu.js (GPL 2.0). Dictionary: WordNet 3.1, © 2011 Princeton University. ZIP: JSZip (MIT). Licence texts are in the app under vendor/licenses.</p>
+    <p class="about" id="about">Panna 1.2.0 reads EPUB, PDF and DjVu files offline. Free software under GPL-3.0. Source code and updates: <a href="https://github.com/gurbirssidhu/panna" target="_blank" rel="noopener" style="color:var(--accent)">github.com/gurbirssidhu/panna</a><br>PDF rendering: pdf.js (Apache 2.0). DjVu rendering: DjVu.js (GPL 2.0). Dictionary: WordNet 3.1, © 2011 Princeton University. ZIP: JSZip (MIT). Licence texts are in the app under vendor/licenses.</p>
   </div>
 </div>
 <div class="drop-hint" id="drop-hint" hidden>Drop files to add them</div>

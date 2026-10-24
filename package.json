@@ -1,6 +1,6 @@
 {
   "name": "panna",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Panna: an offline EPUB, PDF and DjVu reader for Android",
   "scripts": {
     "sync": "cap sync android",

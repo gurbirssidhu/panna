@@ -38,7 +38,7 @@ public class MainActivity extends BridgeActivity {
     public boolean dispatchKeyEvent(KeyEvent event) {
         int code = event.getKeyCode();
         if (ReflowNativePlugin.volumePaging && (code == KeyEvent.KEYCODE_VOLUME_DOWN || code == KeyEvent.KEYCODE_VOLUME_UP)) {
-            if (event.getAction() == KeyEvent.ACTION_DOWN) {
+            if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) { // holding the key turns one page, not dozens
                 ReflowNativePlugin.volume(code == KeyEvent.KEYCODE_VOLUME_DOWN ? 1 : -1);
             }
             return true;
@@ -67,17 +67,20 @@ public class MainActivity extends BridgeActivity {
         if (uris.isEmpty()) return;
         intent.setAction(Intent.ACTION_MAIN); // don't import the same file again on recreate
 
+        ReflowNativePlugin.copying.addAndGet(uris.size());
+        ReflowNativePlugin.receiving();
         new Thread(() -> {
             File dir = new File(getCacheDir(), "incoming");
             if (!dir.exists()) dir.mkdirs();
             for (Uri uri : uris) {
+                String name = "the shared file";
                 try {
-                    String name = displayName(uri);
+                    name = displayName(uri);
                     String safe = name.replaceAll("[\\\\/:*?\"<>|]", "_");
                     File out = new File(dir, System.currentTimeMillis() + "_" + safe);
                     try (InputStream in = getContentResolver().openInputStream(uri);
                          OutputStream os = new FileOutputStream(out)) {
-                        if (in == null) continue;
+                        if (in == null) throw new java.io.FileNotFoundException("The other app did not hand over the file.");
                         byte[] buf = new byte[1 << 16];
                         int n;
                         while ((n = in.read(buf)) > 0) os.write(buf, 0, n);
@@ -87,8 +90,17 @@ public class MainActivity extends BridgeActivity {
                     f.put("path", out.getAbsolutePath());
                     String type = getContentResolver().getType(uri);
                     f.put("type", type == null ? "" : type);
+                    ReflowNativePlugin.copying.decrementAndGet();
                     ReflowNativePlugin.push(f);
-                } catch (Exception ignored) {
+                } catch (Exception e) {
+                    // tell the page, so a failed share is not silent
+                    JSObject f = new JSObject();
+                    f.put("name", name);
+                    f.put("error", e instanceof SecurityException || "file".equals(uri.getScheme())
+                            ? "Android did not let Panna read it. Open it from the Files app, or use Share instead."
+                            : "The file could not be copied. It may have been moved or deleted.");
+                    ReflowNativePlugin.copying.decrementAndGet();
+                    ReflowNativePlugin.push(f);
                 }
             }
         }).start();
