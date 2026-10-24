@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- the progress ring in the widget picker preview -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:innerRadiusRatio="2.6"
+    android:shape="ring"
+    android:thicknessRatio="12"
+    android:useLevel="false">
+    <solid android:color="#FFFFFF" />
+</shape>

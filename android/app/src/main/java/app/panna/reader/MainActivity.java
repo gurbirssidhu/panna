@@ -49,6 +49,12 @@ public class MainActivity extends BridgeActivity {
     @SuppressWarnings("deprecation")
     private void handleIntent(Intent intent) {
         if (intent == null) return;
+        String book = intent.getStringExtra(PannaWidget.EXTRA_BOOK);
+        if (book != null) { // tapped on the home-screen widget
+            intent.removeExtra(PannaWidget.EXTRA_BOOK); // don't reopen it on recreate
+            ReflowNativePlugin.openBook(book);
+            return;
+        }
         String action = intent.getAction();
         final List<Uri> uris = new ArrayList<>();
         if (Intent.ACTION_VIEW.equals(action) && intent.getData() != null) {

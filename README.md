@@ -45,6 +45,7 @@ Get the latest APK from **[Releases](../../releases/latest)**, open it on your p
 - Read aloud with your phone's own voices; follows the text and turns pages (Hindi and Punjabi voices are used for those scripts when installed)
 - Brightness dimmer, full-screen reading, keep screen on
 - Open or share EPUB, PDF and DjVu files from any app
+- Home-screen widget: the book you're reading, a progress ring and how long until the end of the chapter; one tap opens the book where you left off
 
 ## Privacy
 

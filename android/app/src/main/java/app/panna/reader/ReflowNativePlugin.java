@@ -1,6 +1,10 @@
 package app.panna.reader;
 
+import android.appwidget.AppWidgetManager;
+import android.content.ComponentName;
+import android.content.Context;
 import android.graphics.Color;
+import android.util.Base64;
 import android.os.Build;
 import android.view.Window;
 import android.view.WindowManager;
@@ -16,11 +20,19 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.Set;
+
 /** Native helpers for Reflow: files from other apps, keep-screen-on, volume-key paging. */
 @CapacitorPlugin(name = "ReflowNative")
 public class ReflowNativePlugin extends Plugin {
     private static JSArray pending = new JSArray();
     private static ReflowNativePlugin instance;
+    /** a book picked on the home-screen widget, waiting for the page to open it */
+    private static String pendingOpen;
     static volatile boolean volumePaging = false;
     /** files from other apps still being copied in; while it is above zero, take() reports busy so the page can say so */
     static final java.util.concurrent.atomic.AtomicInteger copying = new java.util.concurrent.atomic.AtomicInteger();
@@ -36,6 +48,8 @@ public class ReflowNativePlugin extends Plugin {
         synchronized (ReflowNativePlugin.class) {
             result.put("files", pending);
             pending = new JSArray();
+            if (pendingOpen != null) result.put("open", pendingOpen);
+            pendingOpen = null;
         }
         result.put("busy", copying.get() > 0);
         call.resolve(result);
@@ -86,6 +100,58 @@ public class ReflowNativePlugin extends Plugin {
     static void push(JSObject file) {
         synchronized (ReflowNativePlugin.class) {
             pending.put(file);
+        }
+        ReflowNativePlugin p = instance;
+        if (p != null) p.notifyListeners("incoming", new JSObject());
+    }
+
+    /** The page's summary for the home-screen widget: books in progress, plus covers (base64 JPEG) it has not sent yet. */
+    @PluginMethod
+    public void setWidget(PluginCall call) {
+        final JSArray books = call.getArray("books");
+        final JSObject covers = call.getObject("covers");
+        final Context c = getContext();
+        new Thread(() -> {
+            try {
+                File dir = new File(c.getFilesDir(), "widget");
+                if (!dir.exists()) dir.mkdirs();
+                if (covers != null) {
+                    for (Iterator<String> it = covers.keys(); it.hasNext(); ) {
+                        String id = it.next();
+                        try (FileOutputStream out = new FileOutputStream(PannaWidget.coverFile(c, id))) {
+                            out.write(Base64.decode(covers.getString(id), Base64.DEFAULT));
+                        }
+                    }
+                }
+                Set<String> keep = new HashSet<>();
+                for (int i = 0; books != null && i < books.length(); i++) keep.add(PannaWidget.coverFile(c, books.getJSONObject(i).getString("id")).getName());
+                File[] old = dir.listFiles();
+                if (old != null) for (File f : old) if (!keep.contains(f.getName())) f.delete();
+                PannaWidget.prefs(c).edit().putString("books", books == null ? "[]" : books.toString()).apply();
+                PannaWidget.refresh(c);
+                call.resolve();
+            } catch (Exception e) {
+                call.reject("Could not update the widget: " + e.getMessage());
+            }
+        }).start();
+    }
+
+    /** Asks the launcher to place the widget (Android 8+, if the launcher supports it); resolves { ok }. */
+    @PluginMethod
+    public void pinWidget(PluginCall call) {
+        boolean ok = false;
+        if (Build.VERSION.SDK_INT >= 26) {
+            AppWidgetManager m = getContext().getSystemService(AppWidgetManager.class);
+            if (m != null && m.isRequestPinAppWidgetSupported()) ok = m.requestPinAppWidget(new ComponentName(getContext(), PannaWidget.class), null, null);
+        }
+        JSObject r = new JSObject();
+        r.put("ok", ok);
+        call.resolve(r);
+    }
+
+    static void openBook(String bookId) {
+        synchronized (ReflowNativePlugin.class) {
+            pendingOpen = bookId;
         }
         ReflowNativePlugin p = instance;
         if (p != null) p.notifyListeners("incoming", new JSObject());

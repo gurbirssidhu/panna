@@ -395,7 +395,7 @@ function coverEl(b, cls) {
   }
   return cov;
 }
-function renderShelf() { renderHero(); renderChips(); renderGrid(); }
+function renderShelf() { renderHero(); renderChips(); renderGrid(); widgetSync(); }
 function renderHero() {
   const cands = state.books.filter(b => b.opened && progressOf(b) < FINISHED).sort((a, b) => b.opened - a.opened);
   const b = cands[0];
@@ -772,6 +772,10 @@ async function pullIncoming() {
   const N = NATIVE(); if (!N) return;
   let res; try { res = await N.take(); } catch { return; }
   const files = (res && res.files) || [];
+  if (res && res.open) { // a book tapped on the home-screen widget
+    const b = state.books.find(x => x.id === res.open);
+    if (b && !(state.reader && state.reader.rec.id === b.id)) openBook(b.id);
+  }
   if (!files.length) { if (res && res.busy) toast('Receiving the file…', 60000); return; }
   let last = null;
   for (const f of files) {
@@ -786,6 +790,54 @@ async function pullIncoming() {
   }
   if (last && files.length === 1) { if (state.reader) closeReader(); openBook(last.id); }
 }
+/* ---------- home-screen widget ----------
+   The widget is native and can't read the library, so it is sent a summary of the books in progress (title,
+   place, progress) and covers shrunk to 420 px, whenever the shelf is redrawn or the app goes to the background. */
+let widgetT = 0;
+const widgetSent = new Set(); // covers already sent in this session
+function widgetSync(now) { if (!NATIVE()) return; clearTimeout(widgetT); widgetT = setTimeout(widgetPush, now ? 0 : 400); }
+async function widgetPush() {
+  const N = NATIVE(); if (!N) return;
+  const list = state.books.filter(b => b.id !== 'sample' && b.opened && progressOf(b) < FINISHED).sort((a, b) => b.opened - a.opened).slice(0, 3);
+  const covers = {};
+  for (const b of list) if (!widgetSent.has(b.id)) { try { covers[b.id] = await widgetCover(b); } catch {} }
+  const books = list.map(b => ({ id: b.id, title: b.title, author: b.author || '', pct: +progressOf(b).toFixed(4), place: placeOf(b), nudge: widgetNudge(b) }));
+  try { await N.setWidget({ books, covers }); Object.keys(covers).forEach(id => widgetSent.add(id)); } catch {}
+}
+// a reason to open the book: how close the end of the chapter is (EPUB), or the page (PDF, DjVu)
+function widgetNudge(b) {
+  const p = LS.get('reflow:pos:' + b.id, null);
+  if (!p) return '';
+  if (p.fixed) return `Page ${fmt(p.page + 1)} of ${fmt(p.total)}`;
+  if (typeof p.left !== 'number') return ''; // saved before this was recorded: the widget shows the place instead
+  if (p.left > 0 && p.left <= 3) return `Chapter ends in ${p.left} min`;
+  if (p.left > 0) return p.left === 1 ? '1 min left in chapter' : `${p.left} min left in chapter`;
+  return p.idx + 1 < p.total ? 'Next chapter is waiting' : '';
+}
+async function widgetCover(b) {
+  const H = 420, c = document.createElement('canvas'), x = c.getContext('2d');
+  if (b.cover) {
+    const bmp = await createImageBitmap(b.cover);
+    c.height = H; c.width = Math.min(600, Math.round(bmp.width * H / bmp.height));
+    x.fillStyle = '#FFFFFF'; x.fillRect(0, 0, c.width, H); x.drawImage(bmp, 0, 0, c.width, H); bmp.close();
+  } else { // the same cloth-and-title cover the library draws for books without one
+    c.width = 240; c.height = H;
+    x.fillStyle = CLOTH[hash(b.title) % CLOTH.length]; x.fillRect(0, 0, 240, H);
+    x.fillStyle = '#FFFFFF'; x.font = '600 25px Literata, Georgia, serif';
+    const words = b.title.split(/\s+/), lines = []; let line = '';
+    for (const w of words) { const t = line ? line + ' ' + w : w; if (x.measureText(t).width > 196 && line) { lines.push(line); line = w; } else line = t; }
+    if (line) lines.push(line);
+    lines.slice(0, 7).forEach((l, i) => x.fillText(l, 22, 64 + i * 32));
+    x.globalAlpha = 0.8; x.font = '600 13px sans-serif'; x.fillText((b.author || FMT_LABEL[fmtOf(b)]).toUpperCase().slice(0, 26), 22, H - 26);
+  }
+  return c.toDataURL('image/jpeg', 0.85).split(',')[1];
+}
+$('#widget-btn').addEventListener('click', async () => {
+  closeLSheets();
+  let r = null; try { r = await NATIVE().pinWidget(); } catch {}
+  if (!r || !r.ok) toast('Long-press an empty spot on the home screen, tap Widgets, and find Panna.', 6000);
+});
+
 /* ---------- reader: prefs ---------- */
 const PREF_DEF = { fs: 19, face: 'read', lh: '1.7', paper: 'auto', measure: '38em', layout: 'pages', fxLayout: 'scroll', awake: true, vol: true, full: true, hyph: 'on', trim: true, dim: 0 };
 let prefs = Object.assign({}, PREF_DEF, LS.get('reflow:prefs', {}));
@@ -1187,7 +1239,7 @@ let saveT = 0;
 function savePos(now) {
   const R = state.reader; if (!R) return;
   if (R.fixed && !R.doc) return;
-  const write = () => LS.set('reflow:pos:' + R.rec.id, R.fixed ? { fixed: true, page: R.fpage, frac: +(R.ffrac || 0).toFixed(4), total: R.doc.n, p: +(R.overall || 0).toFixed(4) } : { idx: R.idx, frac: +R.frac.toFixed(4), total: R.book.spine.length, p: +(R.overall || 0).toFixed(4) });
+  const write = () => LS.set('reflow:pos:' + R.rec.id, R.fixed ? { fixed: true, page: R.fpage, frac: +(R.ffrac || 0).toFixed(4), total: R.doc.n, p: +(R.overall || 0).toFixed(4) } : { idx: R.idx, frac: +R.frac.toFixed(4), total: R.book.spine.length, p: +(R.overall || 0).toFixed(4), left: R.left || 0 });
   clearTimeout(saveT); if (now) write(); else saveT = setTimeout(write, 600);
 }
 function updateStatus() {
@@ -1198,7 +1250,7 @@ function updateStatus() {
   const before = sz.slice(0, R.idx).reduce((a, b) => a + b, 0);
   const overall = R.idx === n - 1 && R.frac >= 0.999 ? 1 : (before + sz[R.idx] * R.frac) / total; R.overall = overall;
   $('#r-track').style.width = (overall * 100).toFixed(2) + '%';
-  const left = Math.ceil((R.words * (1 - R.frac)) / 230);
+  const left = Math.ceil((R.words * (1 - R.frac)) / 230); R.left = Math.max(0, left);
   const mins = left <= 0 ? 'end of section' : left === 1 ? 'about 1 min left' : `about ${left} min left`;
   const where = prefs.layout === 'pages' ? `Page ${R.page + 1} of ${R.pages} · Section ${R.idx + 1} of ${n}` : `Section ${R.idx + 1} of ${n}`;
   $('#r-where').textContent = `${where} · ${mins}`;
@@ -2282,6 +2334,7 @@ async function boot() {
   renderShelf();
   if (!window.pdfjsLib) toast('The PDF engine did not load. EPUB reading still works.');
   if (isNative) {
+    $('#widget-btn').hidden = !NATIVE();
     const APP = plug('App'), N = NATIVE();
     try {
       APP.addListener('backButton', () => {
@@ -2295,7 +2348,7 @@ async function boot() {
         else if (lib.q) { lib.q = ''; $('#lib-q').value = ''; renderGrid(); }
         else APP.exitApp();
       });
-      APP.addListener('pause', () => savePos(true));
+      APP.addListener('pause', () => { savePos(true); widgetSync(true); });
       APP.addListener('resume', () => { setStatusBar(); if (state.reader) keepAwake(prefs.awake); });
     } catch {}
     try {

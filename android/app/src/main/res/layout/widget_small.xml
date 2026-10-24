@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 2x2, on the pattern of small media widgets: artwork top-left, progress as a small ring top-right, then
+     the title and how much is left along the bottom, nothing else (Apple HIG: one idea, comfortable density, text 11pt or larger, custom font only
+     for the large text). The cover sits on a blurred, colour-boosted copy of itself; a shade darkens towards
+     the bottom so the white text reads on any cover. The cover bitmap is drawn by PannaWidget (rounded
+     corners, spine, shadow), so it carries 6 dp of transparent margin for the shadow. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@android:id/background"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_bg"
+    android:clipToOutline="true">
+
+    <ImageView
+        android:id="@+id/w_blur"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:importantForAccessibility="no"
+        android:scaleType="centerCrop" />
+
+    <ImageView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:importantForAccessibility="no"
+        android:scaleType="fitXY"
+        android:src="@drawable/widget_shade" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:padding="14dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:orientation="horizontal">
+
+            <ImageView
+                android:id="@+id/w_cover"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:layout_marginStart="-6dp"
+                android:layout_marginTop="-6dp"
+                android:layout_marginBottom="-6dp"
+                android:adjustViewBounds="true"
+                android:contentDescription="@string/widget_cover"
+                android:scaleType="fitStart" />
+
+            <FrameLayout
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1" />
+
+            <!-- progress as a ring (drawn by PannaWidget) around a bookmark ribbon ("your place"), balancing the cover -->
+            <FrameLayout
+                android:layout_width="38dp"
+                android:layout_height="38dp">
+
+                <ImageView
+                    android:id="@+id/w_ring"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:importantForAccessibility="no" />
+
+                <ImageView
+                    android:layout_width="16dp"
+                    android:layout_height="16dp"
+                    android:layout_gravity="center"
+                    android:importantForAccessibility="no"
+                    android:src="@drawable/widget_ic_bookmark" />
+            </FrameLayout>
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/w_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:ellipsize="end"
+            android:fontFamily="serif"
+            android:includeFontPadding="false"
+            android:lineSpacingMultiplier="1.05"
+            android:maxLines="2"
+            android:shadowColor="#80000000"
+            android:shadowDy="1"
+            android:shadowRadius="3"
+            android:textColor="#FFFFFF"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/w_sub"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="3dp"
+            android:ellipsize="end"
+            android:fontFamily="sans-serif-medium"
+            android:maxLines="1"
+            android:shadowColor="#80000000"
+            android:shadowRadius="3"
+            android:textColor="#E6FFFFFF"
+            android:textSize="12sp" />
+
+    </LinearLayout>
+</FrameLayout>

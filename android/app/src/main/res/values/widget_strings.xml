@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_name">Continue reading</string>
+    <string name="widget_description">The book you are reading, one tap from the home screen</string>
+    <string name="widget_label">CONTINUE READING</string>
+    <string name="widget_cover">Book cover</string>
+    <string name="widget_brand">Panna.</string>
+    <string name="widget_empty_title">Pick your next book</string>
+    <string name="widget_empty_sub">Your library is waiting</string>
+    <string name="widget_preview_title">Your book</string>
+    <string name="widget_preview_sub">7 min left in chapter</string>
+</resources>
