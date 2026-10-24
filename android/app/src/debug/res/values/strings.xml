@@ -1,0 +1,6 @@
+<?xml version='1.0' encoding='utf-8'?>
+<!-- Test builds (assembleDebug) are named so they can't be confused with the real app on the phone. -->
+<resources>
+    <string name="app_name">Panna test</string>
+    <string name="title_activity_main">Panna test</string>
+</resources>

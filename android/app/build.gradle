@@ -31,6 +31,12 @@ android {
         }
     }
     buildTypes {
+        // Test builds install next to the real app (own package, own library, named "Panna test"),
+        // so trying a change never replaces the installed Panna or touches its books.
+        debug {
+            applicationIdSuffix ".debug"
+            versionNameSuffix "-test"
+        }
         release {
             if (ks['storeFile']) signingConfig signingConfigs.release
             minifyEnabled false
