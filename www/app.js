@@ -710,7 +710,7 @@ async function exportBackup() {
   toast('Packing the backup…', 120000);
   try {
     const marks = (await DB.allMarks()).filter(m => books.some(b => b.id === m.bookId));
-    const meta = { app: 'reflow', format: 2, created: new Date().toISOString(), prefs, theme, books: [], marks };
+    const meta = { app: 'reflow', format: 2, created: new Date().toISOString(), prefs, theme, ttsRate: TTS.rate, books: [], marks };
     const entries = [];
     for (const b of books) {
       const f = fmtOf(b);
@@ -738,6 +738,12 @@ async function importBackup(file) {
   toast('Restoring…', 120000);
   try {
     const meta = JSON.parse(await (await readEntry('reflow-backup.json')).text());
+    // restoring into an empty library means moving to a new phone or install: bring the reading settings along too
+    if (!state.books.some(b => b.id !== 'sample')) {
+      if (meta.prefs && typeof meta.prefs === 'object') { prefs = Object.assign({}, PREF_DEF, meta.prefs); LS.set('reflow:prefs', prefs); applyPrefs(); }
+      if (['light', 'dark', 'system'].includes(meta.theme)) setTheme(meta.theme);
+      if (meta.ttsRate) { TTS.rate = meta.ttsRate; LS.set('reflow:ttsRate', TTS.rate); }
+    }
     const have = new Set(state.books.map(b => b.id));
     let nb = 0, nm = 0, skipped = 0, i = 0;
     for (const e of meta.books || []) {
