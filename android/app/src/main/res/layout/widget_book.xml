@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout android:gravity="center_vertical" android:orientation="horizontal" android:id="@+id/w_book" android:layout_width="fill_parent" android:layout_height="0.0dip" android:layout_weight="1.0"
+  xmlns:android="http://schemas.android.com/apk/res/android">
+    <ImageView android:id="@+id/w_cover" android:background="@drawable/widget_cover_bg" android:layout_width="wrap_content" android:layout_height="fill_parent" android:scaleType="fitCenter" android:adjustViewBounds="true" android:maxWidth="120.0dip" android:contentDescription="@string/widget_cover" android:clipToOutline="true" />
+    <LinearLayout android:orientation="vertical" android:layout_width="0.0dip" android:layout_height="fill_parent" android:layout_weight="1.0" android:layout_marginStart="14.0dip">
+        <TextView android:textSize="11.0sp" android:textColor="@color/widget_accent" android:layout_width="fill_parent" android:layout_height="wrap_content" android:text="@string/widget_label" android:maxLines="1" android:fontFamily="sans-serif-medium" android:letterSpacing="0.08" />
+        <TextView android:textSize="17.0sp" android:textStyle="bold" android:textColor="@color/widget_ink" android:ellipsize="end" android:id="@+id/w_title" android:layout_width="fill_parent" android:layout_height="wrap_content" android:layout_marginTop="4.0dip" android:maxLines="2" android:fontFamily="serif" />
+        <TextView android:textSize="13.0sp" android:textColor="@color/widget_muted" android:ellipsize="end" android:id="@+id/w_sub" android:layout_width="fill_parent" android:layout_height="wrap_content" android:layout_marginTop="2.0dip" android:maxLines="1" />
+        <FrameLayout android:layout_width="fill_parent" android:layout_height="0.0dip" android:layout_weight="1.0" />
+        <LinearLayout android:gravity="center_vertical" android:orientation="horizontal" android:layout_width="fill_parent" android:layout_height="wrap_content">
+            <ProgressBar android:id="@+id/w_bar" android:layout_width="0.0dip" android:layout_height="6.0dip" android:max="1000" android:progressDrawable="@drawable/widget_progress" android:layout_weight="1.0" style="?android:progressBarStyleHorizontal" />
+            <TextView android:textSize="12.0sp" android:textColor="@color/widget_muted" android:id="@+id/w_pct" android:layout_width="wrap_content" android:layout_height="wrap_content" android:fontFamily="sans-serif-medium" android:layout_marginStart="10.0dip" />
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>

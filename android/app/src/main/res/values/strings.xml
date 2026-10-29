@@ -4,4 +4,14 @@
     <string name="title_activity_main">Panna</string>
     <string name="package_name">app.panna.reader</string>
     <string name="custom_url_scheme">app.panna.reader</string>
+    <!-- home-screen widget -->
+    <string name="widget_brand">Panna.</string>
+    <string name="widget_cover">Book cover</string>
+    <string name="widget_description">The book you are reading, one tap from the home screen</string>
+    <string name="widget_empty_sub">Your library is waiting</string>
+    <string name="widget_empty_title">Pick your next book</string>
+    <string name="widget_label">CONTINUE READING</string>
+    <string name="widget_name">Continue reading</string>
+    <string name="widget_preview_sub">7 min left in chapter</string>
+    <string name="widget_preview_title">Your book</string>
 </resources>

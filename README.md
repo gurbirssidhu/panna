@@ -16,12 +16,29 @@ No accounts, no ads, no tracking. Your books never leave your phone.
 
 Get the latest APK from **[Releases](../../releases/latest)**, open it on your phone and allow installing from your browser or file manager. Android 6.0 or newer.
 
+**Updating from 1.1.0:** version 1.2.0 is signed with a new key, so Android will not install it over 1.1.0 ("App not installed" or "package conflicts"). To keep your books and reading places:
+
+1. In Panna 1.1.0, tap the gear icon in the library, then **Back up library**. Save the .zip outside the app (Downloads is fine).
+2. Uninstall Panna 1.1.0.
+3. Install 1.2.0, tap the gear icon, then **Restore from backup** and pick that .zip.
+
+From 1.2.0 on, updates install normally over the previous version.
+
+**Check that an APK is genuine:** the signing certificate's SHA-256 fingerprint from 1.2.0 onward is
+
+```
+CC:09:11:F6:27:27:97:A8:67:FF:F1:52:CF:10:0F:65:C1:C2:30:F3:C2:8E:A1:8D:DB:7C:8B:04:9F:E6:53:BB
+```
+
+(Apps such as AppVerifier, or `apksigner verify --print-certs Panna.apk`, show it.)
+
 ## What it does
 
 **Library**
 - Continue-reading card, search by title or author, sort, filter by format
 - Covers from each book's first page, progress on every book
 - Light, dark or follow-the-phone theme
+- Home-screen widget: the book you're reading, with cover and progress, one tap from the home screen
 - Back up everything (books, highlights, bookmarks, places) to one file and restore it on another phone
 
 **EPUB**
@@ -67,7 +84,7 @@ keyAlias=...
 keyPassword=...
 ```
 
-Without that file the release APK is unsigned. The whole interface is one file, `www/index.html`. Native code (file sharing, volume keys, full screen) is in `android/app/src/main/java/app/panna/reader/`. See [tools/BUILD_ENGINES.md](tools/BUILD_ENGINES.md) to rebuild the bundled engines, dictionary and icons.
+Without that file the release APK is unsigned. The interface is plain HTML and JavaScript in `www/` (`index.html`, `app.js`, `theme.js`), with no build step. Native code (file sharing, volume keys, full screen, the home-screen widget) is in `android/app/src/main/java/app/panna/reader/`. See [tools/BUILD_ENGINES.md](tools/BUILD_ENGINES.md) to rebuild the bundled engines, dictionary and icons.
 
 ## Licence
 

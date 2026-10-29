@@ -3,6 +3,8 @@
 
     <application
         android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -22,7 +24,7 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- "Open with Reflow" for PDF and EPUB files -->
+            <!-- "Open with Panna" for PDF and EPUB files -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -36,7 +38,7 @@
                 <data android:mimeType="image/djvu" />
             </intent-filter>
 
-            <!-- "Share to Reflow" from other apps -->
+            <!-- "Share to Panna" from other apps -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <action android:name="android.intent.action.SEND_MULTIPLE" />
@@ -49,6 +51,19 @@
             </intent-filter>
 
         </activity>
+
+        <!-- "Continue reading" home-screen widget -->
+        <receiver
+            android:name=".PannaWidget"
+            android:label="@string/widget_name"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/panna_widget_info" />
+        </receiver>
 
         <provider
             android:name="androidx.core.content.FileProvider"
