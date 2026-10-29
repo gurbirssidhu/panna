@@ -6,10 +6,10 @@
 No accounts, no ads, no tracking. Your books never leave your phone.
 
 <p align="center">
-  <img src="docs/library-light.jpg" width="200" alt="Library, light theme">
+  <img src="docs/library-light.jpg" width="200" alt="Library with the continue-reading card, light theme">
+  <img src="docs/reader-epub.jpg" width="200" alt="Reading an EPUB with the menu showing over the page">
+  <img src="docs/reader-pdf.jpg" width="200" alt="A PDF with trimmed margins and a yellow highlight">
   <img src="docs/library-dark.jpg" width="200" alt="Library, dark theme">
-  <img src="docs/reader-pdf.jpg" width="200" alt="Reading a PDF with margins trimmed">
-  <img src="docs/reader-epub.jpg" width="200" alt="Reading an EPUB">
 </p>
 
 ## Download
@@ -32,27 +32,49 @@ CC:09:11:F6:27:27:97:A8:67:FF:F1:52:CF:10:0F:65:C1:C2:30:F3:C2:8E:A1:8D:DB:7C:8B
 
 (Apps such as AppVerifier, or `apksigner verify --print-certs Panna.apk`, show it.)
 
+## New in 1.2.0
+
+- **Home-screen widget** with the book you're reading (details below)
+- **Highlights and notes in PDFs**, in the same four colours as EPUBs
+- **EPUBs keep their own look:** drop caps, centred headings, small caps, indents and illustrations, while your typeface, text size, line spacing and colours still apply
+- **Right-to-left books** (Arabic, Urdu, Hebrew) read in the right direction
+- **Menu floats over the page:** tap the middle of the page to show or hide it, and the text never jumps or re-flows. Books open with the menu hidden
+- **Bookmarks land on the exact line**, even after you change the text size
+- **Volume keys** turn one page per press, and change the volume as usual during read-aloud or while a menu is open
+- **Mouse and trackpad** turn pages: one swipe is one page
+- **Big libraries back up** in one file, with a progress bar and no 4 GB limit
+- **Clear messages:** shared files show "Receiving the file…" while they copy, and DRM-locked shop EPUBs say so instead of failing silently
+- **Safer book handling:** scripts and remote content inside books are stripped, and a strict content policy stops a book from loading anything from the internet
+
 ## What it does
 
 **Library**
 - Continue-reading card, search by title or author, sort, filter by format
 - Covers from each book's first page, progress on every book
 - Light, dark or follow-the-phone theme
-- Home-screen widget: the book you're reading, with cover and progress, one tap from the home screen
-- Back up everything (books, highlights, bookmarks, places) to one file and restore it on another phone
+- Back up everything (books, highlights, bookmarks, places) to one .zip and restore it on another phone
+
+**Home-screen widget**
+- Add it from the library's settings (gear icon → **Add widget to home screen**), or from your launcher's widget list
+- Small size: the cover on a soft blurred background, a progress ring, and how many minutes are left in the chapter
+- Wide size: cover, title, author, where you are in the book, and a progress bar
+- Tap it to open the book at your place. It follows the phone's light or dark theme
 
 **EPUB**
-- Page-turn or scroll, tap zones, swipe, volume keys
+- Pages or scroll; turn with tap zones, swipes, volume keys, a keyboard or a trackpad
 - Text size, three typefaces (including Atkinson Hyperlegible), spacing, line width, hyphenation
+- The book's own layout is kept; only your reading settings override it
 - Highlights in four colours with notes, bookmarks, full-text search, notes export
 - Footnotes open in a popup without losing your place
+- Time left in the chapter and in the book
 
 **PDF and DjVu**
 - Pages exactly as printed, so equations, tables and diagrams stay intact
 - Scroll or one page at a time; pinch or double-tap to zoom
 - Trim white margins automatically, so text fills a phone screen
 - Night and sepia page colours
-- Search, contents and go-to-page; select PDF text to define or copy it
+- Search, contents and go-to-page
+- PDFs: select text to highlight it, add a note, define a word or copy it
 - Large PDFs open instantly: only the pages on screen are read from storage
 
 **Everywhere**
@@ -61,9 +83,17 @@ CC:09:11:F6:27:27:97:A8:67:FF:F1:52:CF:10:0F:65:C1:C2:30:F3:C2:8E:A1:8D:DB:7C:8B
 - Brightness dimmer, full-screen reading, keep screen on
 - Open or share EPUB, PDF and DjVu files from any app
 
+<p align="center">
+  <img src="docs/reader-epub-styles.jpg" width="200" alt="An illustrated EPUB keeping its own chapter art and drop cap">
+  <img src="docs/reader-djvu-night.jpg" width="200" alt="A DjVu book with night page colours">
+  <img src="docs/settings.jpg" width="200" alt="Settings: theme, backup, add widget, restore">
+</p>
+
+<sub>Screenshots use public-domain books from Project Gutenberg (*Pride and Prejudice* with Hugh Thomson's illustrations, *Frankenstein*, *Alice's Adventures in Wonderland*) and sample notes written for this page.</sub>
+
 ## Privacy
 
-Panna makes no network requests: every feature works offline, and there are no analytics, ads or accounts. (Android lists an internet permission because the app framework adds it by default; the app does not use it.) Everything is stored in the app on your phone. See [PRIVACY.md](PRIVACY.md).
+Panna makes no network requests: every feature works offline, and there are no analytics, ads or accounts. (Android lists an internet permission because the app framework adds it by default; the app does not use it.) Everything is stored in the app on your phone. The widget shows the current book's title and cover on your home screen; remove the widget if you'd rather not show it. See [PRIVACY.md](PRIVACY.md).
 
 ## Build it yourself
 
@@ -84,7 +114,14 @@ keyAlias=...
 keyPassword=...
 ```
 
-Without that file the release APK is unsigned. The interface is plain HTML and JavaScript in `www/` (`index.html`, `app.js`, `theme.js`), with no build step. Native code (file sharing, volume keys, full screen, the home-screen widget) is in `android/app/src/main/java/app/panna/reader/`. See [tools/BUILD_ENGINES.md](tools/BUILD_ENGINES.md) to rebuild the bundled engines, dictionary and icons.
+Without that file the release APK is unsigned.
+
+**Where things are**
+- `www/`: the whole interface, plain HTML and JavaScript with no build step: `index.html` (layout and styles), `app.js` (everything else), `theme.js` (applies the saved theme before the first paint)
+- `www/vendor/`: pdf.js, DjVu.js, JSZip, the dictionary and their licences
+- `android/app/src/main/java/app/panna/reader/`: native code: `MainActivity` (opening and sharing files, volume keys), `ReflowNativePlugin` (bridge to the page: keep screen on, full screen, widget data), `PannaWidget` (the home-screen widget)
+- `android/app/src/main/res/layout/widget_*.xml`: the widget's layouts
+- [tools/BUILD_ENGINES.md](tools/BUILD_ENGINES.md): rebuilding the bundled engines, dictionary and icons
 
 ## Licence
 
