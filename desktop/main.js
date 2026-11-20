@@ -2,7 +2,7 @@
 // The page doesn't see Capacitor here, so it uses its browser fallbacks (downloads for backups, the system's
 // speech voices for read-aloud); window.PannaDesktop (preload.js) adds opening files from the system.
 'use strict';
-const { app, BrowserWindow, Menu, protocol, net, shell, ipcMain, powerSaveBlocker, dialog } = require('electron');
+const { app, BrowserWindow, Menu, protocol, net, shell, ipcMain, powerSaveBlocker, dialog, session } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { pathToFileURL } = require('node:url');
@@ -78,6 +78,10 @@ function saveBounds() {
 
 function start() {
   serve();
+  // On Windows and Linux, Chromium's spellchecker downloads Hunspell dictionaries from Google's servers on first
+  // start, even with spellcheck off in the window. Panna has no text fields that need it and connects to nothing.
+  session.defaultSession.setSpellCheckerEnabled(false);
+  if (process.platform !== 'darwin') session.defaultSession.setSpellCheckerLanguages([]);
   const st = loadBounds();
   win = new BrowserWindow({
     width: st.width || 1180, height: st.height || 820, x: st.x, y: st.y,
@@ -180,6 +184,30 @@ ipcMain.handle('panna:take', async () => {
     }
   }
   return out;
+});
+
+// The one download Panna makes, when the reader asks for the Wiktionary pack in Settings. The page can't fetch it
+// itself (GitHub's downloads don't allow cross-origin requests), and only Panna's own release files can be fetched.
+const DOWNLOADS = 'https://github.com/gurbirssidhu/panna/releases/download/';
+const MAX_DOWNLOAD = 300 * 1024 * 1024;
+ipcMain.handle('panna:download', async (e, url) => {
+  if (typeof url !== 'string' || !url.startsWith(DOWNLOADS) || /[?#]|\.\./.test(url)) throw new Error('not allowed');
+  const res = await net.fetch(url);
+  if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
+  const total = Number(res.headers.get('content-length')) || 0;
+  if (total > MAX_DOWNLOAD) throw new Error('too large');
+  const chunks = []; let got = 0, last = 0;
+  const reader = res.body.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value); got += value.length;
+    if (got > MAX_DOWNLOAD) { reader.cancel(); throw new Error('too large'); }
+    const now = Date.now();
+    if (now - last > 100) { last = now; if (!e.sender.isDestroyed()) e.sender.send('panna:progress', { bytes: got, total }); }
+  }
+  const buf = Buffer.concat(chunks);
+  return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
 });
 
 ipcMain.on('panna:keepAwake', (_e, on) => {

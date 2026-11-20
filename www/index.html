@@ -162,6 +162,10 @@ h1,h2,h3{text-wrap:balance}
 .seg3 button{border:0;background:transparent;border-radius:9px;padding:8px 4px;font-weight:600;color:var(--muted)}
 .seg3 button[aria-pressed="true"]{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.15)}
 .about{color:var(--muted);font-size:.8rem;line-height:1.5;margin:0}
+.seg3.two{grid-template-columns:repeat(2,1fr)}
+.dict-note{margin:0;color:var(--muted);font-size:.84rem;line-height:1.45}
+.dlbar{height:6px;border-radius:99px;background:var(--raise);overflow:hidden}
+.dlbar i{display:block;height:100%;width:0;background:var(--accent);transition:width .2s}
 
 .toast{position:fixed;left:50%;bottom:calc(22px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:12px;font-size:.92rem;z-index:60;max-width:calc(100vw - 32px);box-shadow:0 8px 24px -8px rgba(0,0,0,.4)}
 
@@ -187,8 +191,11 @@ h1,h2,h3{text-wrap:balance}
 .icon svg{width:21px;height:21px;display:block;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .icon[aria-pressed="true"] svg{fill:var(--paper-accent);stroke:var(--paper-accent)}
 .r-scroll{flex:1;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;position:relative;-webkit-overflow-scrolling:touch}
-.r-content{max-width:var(--measure);margin:0 auto;padding:28px 20px 12px;font-family:var(--face);font-size:var(--fs);line-height:var(--lh);overflow-wrap:break-word;-webkit-hyphens:auto;hyphens:auto}
+.r-content{max-width:var(--measure);margin:0 auto;padding:28px var(--mx,18px) 12px;font-family:var(--face);font-size:var(--fs);line-height:var(--lh);overflow-wrap:break-word;-webkit-hyphens:auto;hyphens:auto}
 .reader[data-hyph="off"] .r-content{-webkit-hyphens:manual;hyphens:manual}
+.r-content{text-align:var(--body-align,start)}
+.reader[data-align="left"] .r-content{--body-align:left}
+.reader[data-align="justify"] .r-content{--body-align:justify}
 .r-content p{margin:0 0 .9em}
 .r-content p.b-small{font-size:.84em;color:var(--paper-muted)}
 .r-content h1,.r-content h2,.r-content h3,.r-content h4{line-height:1.25;margin:1.4em 0 .6em;font-weight:600;break-after:avoid}
@@ -244,9 +251,13 @@ h1,h2,h3{text-wrap:balance}
 .dict-body .ex{display:block;color:var(--paper-muted);font-style:italic;font-family:var(--read)}
 .dict-body .syn{display:block;color:var(--paper-muted);font-size:.86rem}
 .dict-body .more{border:0;background:transparent;color:var(--paper-accent);font-weight:700;padding:6px 0}
+.dict-body .ipa{margin:2px 0 0;color:var(--paper-muted);font-size:.95rem}
+.dict-body .formof{display:block;border:0;background:transparent;color:var(--paper-accent);font-weight:700;font-size:.86rem;padding:4px 0 0}
+.dict-body .src{margin:16px 0 0;color:var(--paper-muted);font-size:.78rem}
+.dict-body .src a{color:var(--paper-accent)}
 .dict-foot{font-size:.72rem;color:var(--paper-muted)}
 #endmark{display:inline-block;width:1px;height:1px}
-.r-end{max-width:var(--measure);margin:0 auto;padding:12px 20px 48px;display:flex;justify-content:space-between;gap:10px;font-family:var(--ui)}
+.r-end{max-width:var(--measure);margin:0 auto;padding:12px var(--mx,18px) 48px;display:flex;justify-content:space-between;gap:10px;font-family:var(--ui)}
 .r-end button{border:1px solid var(--paper-line);background:transparent;color:var(--paper-ink);border-radius:10px;padding:10px 14px;font-weight:600;min-width:0;max-width:48%;text-align:left}
 .r-end button span{display:block;font-size:.78rem;color:var(--paper-muted);font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .r-end .next{margin-left:auto;text-align:right}
@@ -417,12 +428,24 @@ h1,h2,h3{text-wrap:balance}
 <div class="lsheet" id="set-sheet" hidden role="dialog" aria-label="Settings">
   <div class="grab"></div>
   <h3>Settings</h3>
-  <p class="sub">Everything stays on this phone.</p>
+  <p class="sub">Everything stays on this device.</p>
   <div class="lgroup">
     <p class="label">Appearance</p>
     <div class="seg3" id="theme-seg">
       <button type="button" data-v="light">Light</button><button type="button" data-v="dark">Dark</button><button type="button" data-v="system">System</button>
     </div>
+  </div>
+  <div class="lgroup" id="dict-group">
+    <p class="label">Dictionary</p>
+    <div class="seg3 two" id="dict-seg" hidden>
+      <button type="button" data-v="wordnet">WordNet</button><button type="button" data-v="wiktionary">Wiktionary</button>
+    </div>
+    <p class="dict-note" id="dict-note"></p>
+    <div class="dlbar" id="dict-bar" hidden><i></i></div>
+    <button class="lrow" type="button" id="dict-dl"><svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg><span>Download Wiktionary<small>A larger, newer dictionary, kept on this device</small></span></button>
+    <button class="lrow" type="button" id="dict-file"><svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M12 18v-6M9 15l3-3 3 3"/></svg><span>Add from a file<small>panna-wiktionary-en.zip, if you downloaded it yourself</small></span></button>
+    <input type="file" id="dict-input" class="hidden-input" accept=".zip,application/zip,application/x-zip-compressed,application/octet-stream">
+    <button class="lrow danger" type="button" id="dict-rm" hidden><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg><span>Remove Wiktionary<small>Frees the space; Define goes back to WordNet</small></span></button>
   </div>
   <div class="lgroup">
     <button class="lrow" type="button" id="backup-btn"><svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg><span>Back up library<small>Books, highlights, bookmarks and places, as one .zip file</small></span></button>
@@ -430,7 +453,7 @@ h1,h2,h3{text-wrap:balance}
     <button class="lrow" type="button" id="restore-btn"><svg viewBox="0 0 24 24"><path d="M12 21V9M7 14l5-5 5 5M5 3h14"/></svg><span>Restore from backup<small>Adds books from a Panna or Reflow backup; nothing is overwritten</small></span></button>
   </div>
   <div class="lgroup">
-    <p class="about" id="about">Panna 1.2.0 reads EPUB, PDF and DjVu files offline. Free software under GPL-3.0. Source code and updates: <a href="https://github.com/gurbirssidhu/panna" target="_blank" rel="noopener" style="color:var(--accent)">github.com/gurbirssidhu/panna</a><br>PDF rendering: pdf.js (Apache 2.0). DjVu rendering: DjVu.js (GPL 2.0). Dictionary: WordNet 3.1, © 2011 Princeton University. ZIP: JSZip (MIT). Licence texts are in the app under vendor/licenses.</p>
+    <p class="about" id="about">Panna 1.4.0 reads EPUB, PDF and DjVu files offline. Free software under GPL-3.0. Source code and updates: <a href="https://github.com/gurbirssidhu/panna" target="_blank" rel="noopener" style="color:var(--accent)">github.com/gurbirssidhu/panna</a><br>PDF rendering: pdf.js (Apache 2.0). DjVu rendering: DjVu.js (GPL 2.0). Dictionary: WordNet 3.1, © 2011 Princeton University; optional Wiktionary pack from English Wiktionary via kaikki.org, CC BY-SA 4.0. ZIP: JSZip (MIT). Licence texts are in the app under vendor/licenses.</p>
   </div>
 </div>
 <div class="drop-hint" id="drop-hint" hidden>Drop files to add them</div>
@@ -517,6 +540,10 @@ h1,h2,h3{text-wrap:balance}
       <button type="button" data-v="auto">Auto</button><button type="button" data-v="white">White</button><button type="button" data-v="sepia">Sepia</button><button type="button" data-v="night">Night</button></div></div>
     <div class="pgroup epub-only"><p class="label">Line width</p><div class="pseg" data-pref="measure">
       <button type="button" data-v="32em">Narrow</button><button type="button" data-v="38em">Medium</button><button type="button" data-v="48em">Wide</button></div></div>
+    <div class="pgroup epub-only"><p class="label">Alignment</p><div class="pseg" data-pref="align">
+      <button type="button" data-v="book">Book</button><button type="button" data-v="left">Left</button><button type="button" data-v="justify">Justified</button></div></div>
+    <div class="pgroup epub-only"><p class="label">Margins</p><div class="pseg" data-pref="mx">
+      <button type="button" data-v="10">Small</button><button type="button" data-v="18">Normal</button><button type="button" data-v="32">Large</button><button type="button" data-v="48">Extra</button></div></div>
     <div class="pgroup epub-only"><p class="label">Hyphenation</p><div class="pseg" data-pref="hyph">
       <button type="button" data-v="on">On</button><button type="button" data-v="off">Off</button></div></div>
     <div class="pgroup"><p class="label">Brightness</p><input type="range" id="pref-dim" min="30" max="100" step="5" value="100" aria-label="Brightness"></div>
@@ -527,7 +554,7 @@ h1,h2,h3{text-wrap:balance}
   </div>
   <div class="sheet notebox" id="dictbox" hidden role="dialog" aria-label="Dictionary">
     <div class="dict-body" id="dict-body"></div>
-    <div class="rowx"><span class="dict-foot">WordNet 3.1 · Princeton University · offline</span><span class="sp"></span><button class="nb-btn primary" type="button" id="dict-close">Close</button></div>
+    <div class="rowx"><span class="dict-foot" id="dict-foot">offline</span><span class="sp"></span><button class="nb-btn primary" type="button" id="dict-close">Close</button></div>
   </div>
   <div class="sheet notebox" id="fnbox" hidden role="dialog" aria-label="Footnote">
     <div class="fn-body" id="fn-body"></div>

@@ -20,11 +20,11 @@ function toast(msg, ms = 3200) { const t = $('#toast'); t.textContent = msg; t.h
    IndexedDB write the whole file again, so files are written once, on import, and never rewritten. */
 const metaOf = b => { const { blob, cover, ...m } = b; return m; };
 const DB = {
-  db: null, mem: new Map(), memMarks: new Map(),
+  db: null, mem: new Map(), memMarks: new Map(), memFiles: new Map(),
   async open() {
     try {
       this.db = await new Promise((res, rej) => {
-        const r = indexedDB.open('reflow-reader', 3);
+        const r = indexedDB.open('reflow-reader', 4);
         r.onupgradeneeded = e => {
           const d = r.result;
           if (!d.objectStoreNames.contains('books')) d.createObjectStore('books', { keyPath: 'id' });
@@ -37,6 +37,7 @@ const DB = {
               meta.put(metaOf(c.value)); c.continue();
             };
           }
+          if (!d.objectStoreNames.contains('files')) d.createObjectStore('files', { keyPath: 'id' }); // version 4: downloaded dictionary packs
         };
         r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
       });
@@ -82,7 +83,11 @@ const DB = {
   async allMarks() { if (this.db) { try { return await this.req('marks', 'readonly', s => s.getAll()); } catch {} } return [...this.memMarks.values()]; },
   async putMark(m) { this.memMarks.set(m.id, m); if (this.db) { try { await this.req('marks', 'readwrite', s => s.put(m)); } catch {} } },
   async delMark(id) { this.memMarks.delete(id); if (this.db) { try { await this.req('marks', 'readwrite', s => s.delete(id)); } catch {} } },
-  async delMarksFor(bookId) { for (const m of await this.marksFor(bookId)) await this.delMark(m.id); }
+  async delMarksFor(bookId) { for (const m of await this.marksFor(bookId)) await this.delMark(m.id); },
+  /* app files that aren't books (the Wiktionary pack): { id, blob, info } */
+  async getFile(id) { if (this.db) { try { return await this.req('files', 'readonly', s => s.get(id)) || null; } catch {} } return this.memFiles.get(id) || null; },
+  async putFile(f) { this.memFiles.set(f.id, f); if (this.db) await this.req('files', 'readwrite', s => s.put(f)); },
+  async delFile(id) { this.memFiles.delete(id); if (this.db) { try { await this.req('files', 'readwrite', s => s.delete(id)); } catch {} } }
 };
 
 /* ---------- native bridge (Capacitor) ---------- */
@@ -495,7 +500,7 @@ function renderGrid() {
 function closeLSheets() { $('#book-sheet').hidden = true; $('#set-sheet').hidden = true; $('#lscrim').hidden = true; }
 const lsheetOpen = () => !$('#book-sheet').hidden || !$('#set-sheet').hidden;
 $('#lscrim').addEventListener('click', closeLSheets);
-$('#settings-btn').addEventListener('click', () => { closeLSheets(); $('#set-sheet').hidden = false; $('#lscrim').hidden = false; });
+$('#settings-btn').addEventListener('click', () => { closeLSheets(); $('#set-sheet').hidden = false; $('#lscrim').hidden = false; dictUi(); });
 let sheetBook = null, rmArmed = null;
 function openBookSheet(b) {
   closeLSheets(); sheetBook = b;
@@ -542,7 +547,7 @@ async function sniff(f) {
   if (h[0] === 0x50 && h[1] === 0x4B) {
     const first = String.fromCharCode(...h.slice(30, 38)), head = String.fromCharCode(...h.slice(30, 90));
     if (first === 'mimetype' && head.includes('application/epub+zip')) return 'epub';
-    try { const z = await zipEntries(f); if (z.has('reflow-backup.json')) return 'backup'; if (z.has('META-INF/container.xml')) return 'epub'; } catch {} // central directory only: never loads the file
+    try { const z = await zipEntries(f); if (z.has('reflow-backup.json')) return 'backup'; if (z.has('META-INF/container.xml')) return 'epub'; if (z.has('info.json') && z.has('LICENSE.txt')) return 'dictpack'; } catch {} // central directory only: never loads the file
     return 'zip';
   }
   if (String.fromCharCode(...h).includes('%PDF-')) return 'pdf'; // some PDFs have junk before the header
@@ -552,6 +557,7 @@ async function sniff(f) {
 async function handleFile(f) {
   let kind; try { kind = await sniff(f); } catch { kind = 'unknown'; }
   if (kind === 'backup') { await importBackup(f); return null; }
+  if (kind === 'dictpack') { await installPack(f, null); return null; }
   if (!['epub', 'pdf', 'djvu'].includes(kind)) { toast(`${f.name || 'That file'} is not an EPUB, PDF or DjVu file.`, 4000); return null; }
   const dup = state.books.find(b => b.fileName && b.fileName === f.name && b.blob && b.blob.size === f.size);
   if (dup) { toast(`“${dup.title}” is already in your library.`); return dup; }
@@ -887,7 +893,7 @@ $('#widget-btn').addEventListener('click', async () => {
 });
 
 /* ---------- reader: prefs ---------- */
-const PREF_DEF = { fs: 19, face: 'read', lh: '1.7', paper: 'auto', measure: '38em', layout: 'pages', fxLayout: 'scroll', awake: true, vol: true, full: true, hyph: 'on', trim: true, dim: 0 };
+const PREF_DEF = { fs: 19, face: 'read', lh: '1.7', paper: 'auto', measure: '38em', layout: 'pages', fxLayout: 'scroll', awake: true, vol: true, full: true, hyph: 'on', trim: true, dim: 0, align: 'book', mx: '18' };
 let prefs = Object.assign({}, PREF_DEF, LS.get('reflow:prefs', {}));
 if (!LS.get('reflow:v2', false)) { prefs.paper = 'auto'; LS.set('reflow:v2', true); LS.set('reflow:prefs', prefs); }
 const FACE = { read: 'var(--read)', hyper: 'var(--hyper)', ui: 'var(--ui)' };
@@ -895,7 +901,8 @@ function applyPrefs() {
   const R = $('#reader');
   R.style.setProperty('--fs', prefs.fs + 'px'); R.style.setProperty('--lh', prefs.lh);
   R.style.setProperty('--face', FACE[prefs.face] || FACE.read); R.style.setProperty('--measure', prefs.measure);
-  R.dataset.paper = paperNow(); R.dataset.hyph = prefs.hyph;
+  R.dataset.paper = paperNow(); R.dataset.hyph = prefs.hyph; R.dataset.align = prefs.align;
+  R.style.setProperty('--mx', (parseFloat(prefs.mx) || 18) + 'px');
   R.classList.toggle('paged', !(state.reader && state.reader.fixed) && prefs.layout === 'pages');
   $('#fs-val').textContent = prefs.fs + ' px';
   $$('.pseg').forEach(g => g.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(String(prefs[g.dataset.pref]) === b.dataset.v))));
@@ -1029,6 +1036,10 @@ const CSS_OK = new Set(['text-align', 'text-align-last', 'text-indent', 'font-st
   'margin-top', 'margin-bottom', 'margin-left', 'margin-right', 'padding-top', 'padding-bottom', 'padding-left', 'padding-right',
   'list-style-type', 'list-style-position', 'float', 'clear', 'break-before', 'break-after', 'break-inside', 'page-break-before', 'page-break-after',
   'page-break-inside', 'border-collapse', 'direction', 'unicode-bidi', 'hyphens']);
+/* A book's ordinary alignment (left, start, justify) gives way to the reader's Alignment setting through --body-align;
+   centred and right-aligned text (headings, verse, epigraphs) keeps the book's own. */
+const BODY_ALIGN = /^(left|start|justify|auto)$/i;
+const alignVal = v => BODY_ALIGN.test(v) ? `var(--body-align, ${v})` : v;
 const DISPLAY_OK = /^(none|block|inline|inline-block|list-item|table|table-row|table-cell|table-caption|table-header-group|table-row-group|table-footer-group|table-column|table-column-group)$/;
 function cssValueOk(prop, v) {
   if (!v || BAD_CSS.test(v) || /var\(|attr\(|env\(/i.test(v)) return false;
@@ -1057,6 +1068,7 @@ function sanitize(root) {
         const st = el.style, html = !el.namespaceURI || el.namespaceURI === HTML_NS;
         // HTML: only the allowed properties; SVG drawings keep their styling except outside references
         if (st) for (const p of [...st]) { const v = st.getPropertyValue(p); if (html ? !(CSS_OK.has(p) && cssValueOk(p, v)) : BAD_CSS.test(v)) st.removeProperty(p); }
+        if (st && html && BODY_ALIGN.test(st.getPropertyValue('text-align'))) st.setProperty('text-align', alignVal(st.getPropertyValue('text-align')));
         if (!st || !el.getAttribute('style') || BAD_CSS.test(el.getAttribute('style'))) el.removeAttribute('style');
       }
     }
@@ -1103,7 +1115,7 @@ function bookSheet(cssText) {
         for (const p of r.style) {
           if (!CSS_OK.has(p) || (sc.top && /^(margin|padding|display|float)/.test(p))) continue; // body margins would add to the reader's own
           const v = r.style.getPropertyValue(p).trim();
-          if (cssValueOk(p, v)) decl.push(`${p}:${v}`);
+          if (cssValueOk(p, v)) decl.push(`${p}:${p === 'text-align' ? alignVal(v) : v}`);
         }
         if (decl.length) try { sheet.insertRule(`${sc.sel}{${decl.join(';')}}`, sheet.cssRules.length); } catch {}
       }
@@ -1226,10 +1238,12 @@ function layout() {
   const R = state.reader; if (!R) return;
   const sc = $('#scroller'), c = $('#content');
   const old = document.getElementById('endmark'); if (old) old.remove();
-  if (prefs.layout !== 'pages') { c.style.cssText = ''; R.pages = 1; return; }
+  let sp = document.getElementById('pg-end');
+  if (!sp) { sp = document.createElement('div'); sp.id = 'pg-end'; sp.setAttribute('aria-hidden', 'true'); sp.style.cssText = 'position:absolute;top:0;width:1px;height:1px;pointer-events:none'; sc.appendChild(sp); }
+  if (prefs.layout !== 'pages') { c.style.cssText = ''; R.pages = 1; sp.style.left = '0'; return; }
   const W = sc.clientWidth, H = sc.clientHeight;
   const measurePx = parseFloat(prefs.measure) * prefs.fs;
-  const p = Math.max(18, Math.round((W - measurePx) / 2));
+  const p = Math.max(parseFloat(prefs.mx) || 18, Math.round((W - measurePx) / 2)); // the margins setting is the least there is
   c.style.width = W + 'px'; c.style.height = H + 'px';
   c.style.padding = `26px ${p}px 30px`;
   c.style.columnWidth = (W - 2 * p) + 'px'; c.style.columnGap = (2 * p) + 'px';
@@ -1237,6 +1251,8 @@ function layout() {
   const end = document.createElement('span'); end.id = 'endmark'; c.appendChild(end);
   R.W = W;
   R.pages = Math.max(1, Math.floor((end.getBoundingClientRect().left - c.getBoundingClientRect().left) / W) + 1);
+  // the browser doesn't count the last column's margin as scrollable, so the last page would stop short by a margin
+  sp.style.left = (R.pages * W - 1) + 'px';
 }
 function relayout(f) { const R = state.reader; if (!R) return; if (R.fixed) { if (R.doc) fxLayout({ page: R.fpage, frac: R.ffrac }); return; } layout(); setFrac(f == null ? R.frac : f); }
 function getFrac() {
@@ -1416,9 +1432,33 @@ document.addEventListener('selectionchange', () => { clearTimeout(selT); selT = 
 function checkSel() {
   const R = state.reader; if (!R || anySheetOpen()) { hideSel(); return; }
   const s = getSelection();
-  if (s && s.rangeCount && !s.isCollapsed && s.toString().trim() && (R.fixed ? fxBox() : $('#content')).contains(s.getRangeAt(0).commonAncestorContainer)) { $('#selbar').hidden = false; $('#sel-define').hidden = s.toString().trim().split(/\s+/).length > 3; }
+  if (s && s.rangeCount && !s.isCollapsed && s.toString().trim() && (R.fixed ? fxBox() : $('#content')).contains(s.getRangeAt(0).commonAncestorContainer)) {
+    $('#selbar').hidden = false; $('#sel-define').hidden = s.toString().trim().split(/\s+/).length > 3;
+    placeSel();
+  }
   else hideSel();
 }
+/* The menu sits just below the selected words (clear of the phone's selection handles), or above them when there's
+   no room below, centred on the selection and kept inside the screen. */
+function placeSel() {
+  const bar = $('#selbar'), s = getSelection();
+  if (bar.hidden || !s || !s.rangeCount) return;
+  const rects = [...s.getRangeAt(0).getClientRects()].filter(r => r.width > 0 && r.height > 0);
+  if (!rects.length) return;
+  const first = rects[0], last = rects[rects.length - 1];
+  const par = (bar.offsetParent || document.body).getBoundingClientRect();
+  const touch = !DESK && matchMedia('(pointer: coarse)').matches;
+  const gap = touch ? 30 : 10, edge = 8, bw = bar.offsetWidth, bh = bar.offsetHeight;
+  const vh = window.innerHeight, vw = window.innerWidth;
+  let top = last.bottom + gap;
+  if (top + bh > vh - edge) top = first.top - gap - bh; // no room below: go above the first line
+  top = Math.max(edge, Math.min(vh - bh - edge, top));
+  const lo = Math.min(...rects.map(r => r.left)), hi = Math.max(...rects.map(r => r.right));
+  const left = Math.max(edge, Math.min(vw - bw - edge, (rects.length > 1 ? (lo + hi) / 2 : (last.left + last.right) / 2) - bw / 2));
+  Object.assign(bar.style, { left: (left - par.left) + 'px', top: (top - par.top) + 'px', bottom: 'auto', transform: 'none' });
+}
+window.addEventListener('resize', placeSel);
+document.addEventListener('scroll', placeSel, { capture: true, passive: true }); // scroll layout: follow the words
 function hideSel() { $('#selbar').hidden = true; }
 async function addHighlight(color) {
   const R = state.reader; const s = getSelection(); if (!R || !s || !s.rangeCount) return null;
@@ -1470,7 +1510,124 @@ $('#nb-del').addEventListener('click', async () => {
   closeSheets(); paintHighlights(); updateStatus(); toast('Highlight deleted.');
 });
 
-/* ---------- dictionary (WordNet 3.1, offline) ---------- */
+/* ---------- dictionary: WordNet 3.1 built in; Wiktionary as an optional download ---------- */
+/* The Wiktionary pack (tools/build_wiktionary.py) is a zip of JSON shards keyed by the first three letters. It is
+   fetched only when the reader taps Download in Settings (the one time Panna goes online), checked against the
+   fingerprint below, and kept in IndexedDB; lookups read one shard from it. It can also be added like a book. */
+const WIKT = {
+  id: 'dict-wiktionary',
+  url: 'https://github.com/gurbirssidhu/panna/releases/download/dict-wiktionary-2026-10/panna-wiktionary-en.zip',
+  size: 39672540, sha256: '1b4e9409388e646916ef78dc051722b20e81be8061c10eb323285135311e46e1' // built 2026-11-20 from the 2026-10-30 extract
+};
+const dictPref = () => LS.get('reflow:dict', 'wordnet');
+const Pack = {
+  st: null, loading: null, shards: new Map(),
+  reset() { this.st = null; this.loading = null; this.shards.clear(); },
+  load() { // { blob, info, ents } or null
+    if (!this.loading) this.loading = (async () => {
+      const f = await DB.getFile(WIKT.id); if (!f || !f.blob) return null;
+      try { this.st = { blob: f.blob, info: f.info || {}, ents: await zipEntries(f.blob) }; } catch { this.st = null; }
+      return this.st;
+    })();
+    return this.loading;
+  },
+  key(w) { let k = ''; for (const c of (w + '__').slice(0, 3)) k += c >= 'a' && c <= 'z' ? c : '_'; return k; },
+  async get(w) {
+    const st = await this.load(); if (!st) return null;
+    const k = this.key(w);
+    if (!this.shards.has(k)) {
+      const en = st.ents.get(k + '.json');
+      this.shards.set(k, en ? zipEntryBlob(st.blob, en).then(b => b.text()).then(JSON.parse).catch(() => ({})) : Promise.resolve({}));
+      if (this.shards.size > 24) this.shards.delete(this.shards.keys().next().value); // keep memory small
+    }
+    const sh = await this.shards.get(k);
+    return Object.prototype.hasOwnProperty.call(sh, w) ? sh[w] : null;
+  }
+};
+async function sha256hex(blob) {
+  if (!crypto.subtle) return '';
+  const d = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
+  return [...new Uint8Array(d)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+/* Check and keep a pack. expectSha: the published fingerprint (a download), or null (a file the reader added). */
+async function installPack(blob, expectSha) {
+  if (expectSha && (await sha256hex(blob)) !== expectSha) throw new Error('The download was damaged or changed on the way. Nothing was installed; try again.');
+  let info;
+  try { const ents = await zipEntries(blob); info = JSON.parse(await (await zipEntryBlob(blob, ents.get('info.json'))).text()); }
+  catch { info = null; }
+  if (!info || info.format !== 'panna-dict' || info.id !== 'wiktionary-en') {
+    if (expectSha) throw new Error('That is not a Panna dictionary pack.');
+    toast('That zip file is not a Panna dictionary pack.'); return false;
+  }
+  await DB.putFile({ id: WIKT.id, blob, info });
+  Pack.reset(); LS.set('reflow:dict', 'wiktionary'); dictUi();
+  if (!expectSha) toast(`Wiktionary installed: ${(info.words || 0).toLocaleString()} words. Define now uses it.`);
+  return true;
+}
+let packDl = null; // { bytes, total } while downloading
+async function downloadPack() {
+  if (packDl) return;
+  packDl = { bytes: 0, total: WIKT.size }; dictUi();
+  const prog = (bytes, total) => { packDl = { bytes, total: total || WIKT.size }; dictUi(); };
+  let cleanup = null;
+  try {
+    let blob;
+    if (DESK && DESK.download) blob = new Blob([await DESK.download(WIKT.url, p => prog(p.bytes, p.total))]);
+    else if (isNative) {
+      const FS = plug('Filesystem'), path = 'dict/wiktionary.zip';
+      const h = await FS.addListener('progress', p => { if (p && p.url === WIKT.url) prog(p.bytes, p.contentLength); });
+      try {
+        const r = await FS.downloadFile({ url: WIKT.url, path, directory: 'DATA', progress: true, recursive: true });
+        cleanup = () => FS.deleteFile({ path, directory: 'DATA' }).catch(() => {});
+        const at = r && r.path ? (r.path.startsWith('file:') ? r.path : 'file://' + r.path) : (await FS.getUri({ path, directory: 'DATA' })).uri;
+        const res = await fetch(Cap.convertFileSrc(at)); if (!res.ok) throw new Error();
+        blob = await res.blob();
+      } finally { try { h.remove(); } catch {} }
+    } else {
+      const res = await fetch(WIKT.url); if (!res.ok) throw new Error(); // a plain browser: GitHub usually refuses this (CORS)
+      blob = await res.blob();
+    }
+    packDl = { bytes: blob.size, total: blob.size, checking: true }; dictUi();
+    await installPack(blob, WIKT.sha256);
+    toast('Wiktionary is ready. Define now uses it, offline.');
+  } catch (e) {
+    const m = (e && e.message) || '';
+    toast(/damaged|not a Panna/.test(m) ? m : 'Could not download Wiktionary. Check the connection and try again.', 6000);
+  } finally {
+    packDl = null; if (cleanup) cleanup(); dictUi();
+  }
+}
+async function removePack() { await DB.delFile(WIKT.id); Pack.reset(); LS.set('reflow:dict', 'wordnet'); dictUi(); toast('Wiktionary removed. Define uses WordNet.'); }
+const MB = n => (n / 1048576).toFixed(n < 10485760 ? 1 : 0);
+async function dictUi() {
+  const g = $('#dict-group'); if (!g) return;
+  const f = packDl ? null : await DB.getFile(WIKT.id);
+  const have = !!(f && f.blob), cur = have && dictPref() === 'wiktionary' ? 'wiktionary' : 'wordnet';
+  $('#dict-seg').hidden = !have;
+  $$('#dict-seg button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === cur)));
+  $('#dict-dl').hidden = have || !!packDl; $('#dict-file').hidden = have || !!packDl; $('#dict-rm').hidden = !have || !!packDl; $('#dict-bar').hidden = !packDl;
+  const note = $('#dict-note');
+  if (packDl) {
+    const pc = packDl.total ? Math.min(100, packDl.bytes / packDl.total * 100) : 0;
+    $('#dict-bar').firstElementChild.style.width = pc.toFixed(1) + '%';
+    note.textContent = packDl.checking ? 'Checking and installing…' : `Downloading Wiktionary… ${MB(packDl.bytes)}${packDl.total ? ' of ' + MB(packDl.total) : ''} MB`;
+  } else if (have) {
+    const i = f.info || {};
+    note.textContent = `Wiktionary: ${(i.words || 0).toLocaleString()} words, from ${(i.sourceDate || '').slice(0, 7) || 'Wiktionary'}. Works offline. Words it lacks are looked up in WordNet.`;
+  } else {
+    note.textContent = `WordNet is built in. Wiktionary has many more words: old and literary ones (thee, hath, spake), new ones, contractions, names and pronunciations. Download it once${WIKT.size ? ` (${MB(WIKT.size)} MB)` : ''} from GitHub; this is the only time Panna goes online, and after that it works offline.`;
+  }
+}
+$('#dict-dl').addEventListener('click', downloadPack);
+$('#dict-rm').addEventListener('click', removePack);
+$('#dict-file').addEventListener('click', () => $('#dict-input').click());
+$('#dict-input').addEventListener('change', async e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  toast('Checking the dictionary…', 60000);
+  try { await installPack(f, null); } catch { toast('Could not add that file.'); }
+});
+$('#dict-seg').addEventListener('click', e => { const b = e.target.closest('button[data-v]'); if (!b) return; LS.set('reflow:dict', b.dataset.v); dictUi(); });
+
 const Dict = {
   shards: new Map(), exc: null,
   key(w) { const a = /[a-z]/.test(w[0]) ? w[0] : '_'; const b = w.length > 1 && /[a-z]/.test(w[1]) ? w[1] : '_'; return a + b; },
@@ -1490,19 +1647,32 @@ const Dict = {
       if (!rp && /(ed|ing|er|est)$/.test(suf) && /([bdfgklmnprtvz])\1$/.test(b)) cands.push(b.slice(0, -1)); // running → run
     }
     if (w.includes('-')) cands.push(w.replace(/-/g, ' '), w.replace(/-/g, ''));
-    const seen = new Set(), results = [];
-    for (const c of cands) {
-      if (!c || seen.has(c)) continue; seen.add(c);
-      const e = await this.get(c);
-      if (e) results.push({ lemma: c, e });
-      if (results.length >= 2) break;
+    const find = async src => {
+      const seen = new Set(), out = [];
+      for (const c of cands) {
+        if (!c || seen.has(c)) continue; seen.add(c);
+        const e = await src.get(c);
+        if (e) out.push({ lemma: c, e });
+        if (out.length >= 2) break;
+      }
+      return out;
+    };
+    if (dictPref() === 'wiktionary' && await Pack.load()) {
+      const results = await find(Pack); // the word itself first: "spake" before "speak"
+      if (results.length) return { query: w, results, source: 'wiktionary' };
+      return { query: w, results: await this.sorted(await find(this)), source: 'wordnet', fallback: true };
     }
+    return { query: w, results: this.sorted(await find(this)), source: 'wordnet' };
+  },
+  sorted(results) {
     const size = e => Object.values(e).reduce((n, x) => n + x.length, 0);
-    results.sort((x, y) => size(y.e) - size(x.e));
-    return { query: w, results };
+    return results.sort((x, y) => size(y.e) - size(x.e));
   }
 };
-const POS_NAME = { n: 'noun', v: 'verb', a: 'adjective', r: 'adverb' };
+const POS_NAME = { n: 'noun', v: 'verb', a: 'adjective', r: 'adverb', pron: 'pronoun', prep: 'preposition', conj: 'conjunction', det: 'determiner',
+  intj: 'interjection', article: 'article', num: 'numeral', particle: 'particle', prefix: 'prefix', suffix: 'suffix', infix: 'infix', phrase: 'phrase',
+  prep_phrase: 'prepositional phrase', adv_phrase: 'adverbial phrase', contraction: 'contraction', name: 'proper noun', abbrev: 'abbreviation',
+  proverb: 'proverb', postp: 'postposition', affix: 'affix' };
 function selectedWord() {
   const s = getSelection(); if (!s || s.isCollapsed) return '';
   return s.toString().replace(/\s+/g, ' ').trim();
@@ -1512,22 +1682,39 @@ async function define(word) {
   const body = $('#dict-body'); body.replaceChildren();
   const h = document.createElement('h3'); h.textContent = word; body.append(h);
   $('#dictbox').hidden = false; $('#scrim').hidden = false;
+  $('#dict-foot').textContent = dictPref() === 'wiktionary' ? 'Wiktionary · offline' : 'WordNet 3.1 · offline';
   if (word.split(' ').length > 3) { const p = document.createElement('p'); p.className = 'from'; p.textContent = 'Select a single word or a short phrase to look it up.'; body.append(p); return; }
   const note = document.createElement('p'); note.className = 'from'; note.textContent = 'Looking up…'; body.append(note);
-  const { query, results } = await Dict.lookup(word);
+  const { query, results, source, fallback } = await Dict.lookup(word);
   note.remove();
-  if (!results.length) { const p = document.createElement('p'); p.className = 'from'; p.textContent = `No entry for “${query}” in the offline dictionary. Names, rare words and very new words are often missing.`; body.append(p); return; }
+  const wikt = source === 'wiktionary';
+  if (!results.length) {
+    const p = document.createElement('p'); p.className = 'from';
+    p.textContent = dictPref() === 'wiktionary' ? `No entry for “${query}” in Wiktionary or WordNet. Names and dialect spellings are often missing.`
+      : (await DB.getFile(WIKT.id)) ? `No entry for “${query}” in WordNet. Wiktionary has many more words: switch to it under Settings → Dictionary in the library.`
+      : `No entry for “${query}” in WordNet. Wiktionary, which you can download under Settings → Dictionary in the library, has many more words.`;
+    body.append(p); return;
+  }
   results.forEach((r, ri) => {
     if (ri === 0) { h.textContent = r.lemma; if (r.lemma !== query) { const f = document.createElement('p'); f.className = 'from'; f.textContent = `from “${query}”`; body.append(f); } }
     else { const h2 = document.createElement('h3'); h2.textContent = r.lemma; h2.style.marginTop = '18px'; h2.style.fontSize = '1.2rem'; body.append(h2); }
-    for (const pos of ['n', 'v', 'a', 'r']) {
-      const senses = r.e[pos]; if (!senses) continue;
-      const lab = document.createElement('p'); lab.className = 'pos'; lab.textContent = POS_NAME[pos]; body.append(lab);
+    if (r.e._) { const ipa = document.createElement('p'); ipa.className = 'ipa'; ipa.textContent = r.e._; body.append(ipa); }
+    // Wiktionary lists parts of speech by etymology; show the living ones first: those whose senses are all obsolete
+    // or rare, and proper nouns, go last ("spake": the past of speak before an obsolete adjective)
+    const faded = pos => pos === 'name' || r.e[pos].every(sn => /^\([^)]*\b(obsolete|rare|archaic, obsolete)\b/i.test(sn[0]));
+    const order = wikt ? Object.keys(r.e).filter(k => k !== '_').sort((x, y) => faded(x) - faded(y)) : ['n', 'v', 'a', 'r'];
+    for (const pos of order) {
+      const senses = r.e[pos]; if (!senses || !senses.length) continue;
+      const lab = document.createElement('p'); lab.className = 'pos'; lab.textContent = POS_NAME[pos] || pos.replace(/_/g, ' '); body.append(lab);
       const ol = document.createElement('ol'); body.append(ol);
       const addSense = sn => {
         const li = document.createElement('li'); li.append(document.createTextNode(sn[0]));
         for (const ex of sn[1] || []) { const x = document.createElement('span'); x.className = 'ex'; x.textContent = `“${ex}”`; li.append(x); }
         if (sn[2] && sn[2].length) { const y = document.createElement('span'); y.className = 'syn'; y.textContent = 'Also: ' + sn[2].join(', '); li.append(y); }
+        if (sn[3] && sn[3].toLowerCase() !== r.lemma) { // "simple past of speak": one tap to the base word
+          const go = document.createElement('button'); go.type = 'button'; go.className = 'formof'; go.textContent = `Look up “${sn[3]}”`;
+          go.addEventListener('click', () => define(sn[3])); li.append(go);
+        }
         ol.append(li);
       };
       senses.slice(0, 4).forEach(addSense);
@@ -1538,6 +1725,10 @@ async function define(word) {
       }
     }
   });
+  const src = document.createElement('p'); src.className = 'src';
+  if (wikt) { src.append('From Wiktionary (CC BY-SA 4.0) · '); const a = document.createElement('a'); a.href = 'https://en.wiktionary.org/wiki/' + encodeURIComponent(results[0].lemma); a.target = '_blank'; a.rel = 'noopener'; a.textContent = 'full entry online'; src.append(a); }
+  else src.textContent = fallback ? 'Not in Wiktionary; from WordNet 3.1 (Princeton University).' : 'From WordNet 3.1 (Princeton University).';
+  body.append(src);
 }
 $('#dict-close').addEventListener('click', closeSheets);
 $('#sel-define').addEventListener('click', () => { const w = selectedWord(); getSelection().removeAllRanges(); if (w) define(w); });

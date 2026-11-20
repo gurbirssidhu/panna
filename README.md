@@ -62,6 +62,13 @@ There is no App Store version: that needs a paid Apple developer account. The re
 
 Books shared to Panna from Files, Mail or other apps open in it. The home-screen widget and volume-key page turning are Android-only.
 
+## New in 1.4.0
+
+- **Wiktionary dictionary (optional):** over 900,000 words, including old and literary ones, new words, contractions and pronunciations; downloaded once from Settings → Dictionary and used offline. WordNet stays built in
+- **Justified text** (Aa → Alignment: Book, Left or Justified) and **adjustable margins** (Aa → Margins)
+- **The selection menu opens right below the words you select** (above them near the bottom of the screen)
+- Fixes: the last page of a chapter no longer stops short by one margin; the desktop app no longer fetches a spellcheck dictionary from Google on first start
+
 ## New in 1.2.0
 
 - **Home-screen widget** with the book you're reading (details below)
@@ -75,6 +82,10 @@ Books shared to Panna from Files, Mail or other apps open in it. The home-screen
 - **Big libraries back up** in one file, with a progress bar and no 4 GB limit
 - **Clear messages:** shared files show "Receiving the file…" while they copy, and DRM-locked shop EPUBs say so instead of failing silently
 - **Safer book handling:** scripts and remote content inside books are stripped, and a strict content policy stops a book from loading anything from the internet
+
+## Dictionary
+
+Select a word and tap **Define**. The built-in dictionary is WordNet 3.1: fast and offline, but it has no pronouns or other small words, few old or very new words and no contractions. For more, open **Settings → Dictionary** in the library and download **Wiktionary** (38 MB): over 900,000 English words including archaic and literary ones (*thee, hath, spake*), new ones, contractions, names and pronunciations, from English Wiktionary via [kaikki.org](https://kaikki.org) (CC BY-SA 4.0). It is checked against a fingerprint built into the app, kept on the device and works offline; it's the only thing Panna ever downloads, and only when you tap. You can switch back to WordNet or remove it at any time. On a device without internet, download `panna-wiktionary-en.zip` from Releases and add it with **Add** like a book.
 
 ## What it does
 
