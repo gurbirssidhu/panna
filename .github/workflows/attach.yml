@@ -1,0 +1,38 @@
+# Attaches the files of a finished "Desktop and iOS builds" run to a release (a draft is fine), with SHA256SUMS.txt,
+# so a release ships exactly the files that were built and checked, without building them again.
+name: Attach build files to a release
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: ID of a successful "Desktop and iOS builds" run
+        required: true
+      tag:
+        description: Release tag, e.g. v1.3.0 (the release must already exist)
+        required: true
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  attach:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+          path: out
+          merge-multiple: true
+      - name: Checksums
+        working-directory: out
+        run: |
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: Upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: gh release upload "$TAG" out/* --clobber -R "$GITHUB_REPOSITORY"
