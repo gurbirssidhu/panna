@@ -92,8 +92,28 @@ function plug(name) {
   if (!isNative) return null;
   try { return (Cap.Plugins && Cap.Plugins[name]) || (Cap.registerPlugin ? Cap.registerPlugin(name) : null); } catch { return null; }
 }
-const NATIVE = () => plug('ReflowNative');
-function keepAwake(on) { const N = NATIVE(); if (N) try { N.setKeepAwake({ on: !!on }).catch(() => {}); } catch {} }
+const platform = isNative && Cap.getPlatform ? Cap.getPlatform() : 'web';
+const isAndroid = platform === 'android', isIOS = platform === 'ios';
+const DESK = window.PannaDesktop || null; // the Windows / macOS / Linux app (desktop/preload.js)
+const TAP = DESK ? 'Click' : 'Tap', tap = DESK ? 'click' : 'tap'; // the desktop app is used with a mouse
+// Panna's own native plugin (volume keys, immersive mode, widget, shared files) exists only on Android.
+const NATIVE = () => isAndroid ? plug('ReflowNative') : null;
+let wakeLock = null, wakeWant = false;
+function keepAwake(on) {
+  on = !!on;
+  const N = NATIVE();
+  if (N) { try { N.setKeepAwake({ on }).catch(() => {}); } catch {} return; }
+  if (DESK) { DESK.keepAwake(on); return; }
+  wakeWant = on; // iOS and browsers: the Screen Wake Lock API, where there is one
+  if (!navigator.wakeLock) return;
+  if (on && !wakeLock) {
+    navigator.wakeLock.request('screen').then(l => {
+      wakeLock = l; l.addEventListener('release', () => { if (wakeLock === l) wakeLock = null; });
+      if (!wakeWant) { wakeLock = null; l.release().catch(() => {}); }
+    }).catch(() => {});
+  } else if (!on && wakeLock) { const l = wakeLock; wakeLock = null; l.release().catch(() => {}); }
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && wakeWant && !wakeLock) keepAwake(true); });
 function volumePaging(on) { const N = NATIVE(); if (N) try { N.setVolumePaging({ on: !!on }).catch(() => {}); } catch {} }
 const PAPER_BG = { white: '#FFFFFF', sepia: '#F5EDDF', night: '#14161C' };
 function paperNow() { return prefs.paper === 'auto' ? (isDark() ? 'night' : 'white') : prefs.paper; }
@@ -311,28 +331,28 @@ async function parseEpub(blob) {
 const SAMPLE = [
   { title: 'Welcome', html: `<h1>Welcome to Panna</h1>
 <p>Panna is an offline reader for <b>EPUB</b>, <b>PDF</b> and <b>DjVu</b> files. Books open exactly as they are; nothing is converted, uploaded or tracked.</p>
-<p>Tap <b>Add</b> on the library screen, or open a file from WhatsApp, Files or Drive and choose Panna.</p>
+<p>${DESK ? 'Click <b>Add</b> on the library screen, drag books onto this window, or open a file with Panna from your file manager.' : 'Tap <b>Add</b> on the library screen, or open a file from WhatsApp, Files or Drive and choose Panna.'}</p>
 <h2>Turning pages</h2>
 <ul>
-<li>Tap the right side of the page to go forward and the left side to go back, or swipe.</li>
-<li>Tap the middle to show or hide the menu.</li>
-<li>The volume keys turn pages too. You can switch that off under <b>Aa</b>.</li>
+${DESK ? '<li>Click the right side of the page to go forward and the left side to go back, or use the arrow keys.</li>\n<li>Click the middle to show or hide the menu. Esc closes the book.</li>'
+  : '<li>Tap the right side of the page to go forward and the left side to go back, or swipe.</li>\n<li>Tap the middle to show or hide the menu.</li>'}
+${isIOS || DESK ? '' : '<li>The volume keys turn pages too. You can switch that off under <b>Aa</b>.</li>'}
 </ul>` },
   { title: 'EPUB books', html: `<h1>EPUB books</h1>
 <p>EPUB text flows to fit your screen. Under <b>Aa</b> you can change the text size, typeface, spacing, line width, hyphenation and page colour.</p>
 <ul>
-<li>Press and hold a word, drag to select, then pick a colour to highlight it or tap <b>Note</b>.</li>
-<li>Select a single word and tap <b>Define</b> for an English dictionary entry. It works offline.</li>
-<li>Tap a footnote number to read the note without losing your place.</li>
+<li>${DESK ? 'Drag across text to select it' : 'Press and hold a word, drag to select'}, then pick a colour to highlight it or ${tap} <b>Note</b>.</li>
+<li>Select a single word and ${tap} <b>Define</b> for an English dictionary entry. It works offline.</li>
+<li>${TAP} a footnote number to read the note without losing your place.</li>
 <li>The list button opens Contents, Search and Marks. Marks can be shared as a notes file.</li>
 </ul>` },
   { title: 'PDF and DjVu', html: `<h1>PDF and DjVu</h1>
 <p>PDF and DjVu pages are shown exactly as printed, so equations, tables and diagrams stay intact.</p>
 <ul>
-<li>Pinch or double-tap to zoom. Double-tap again to fit the page.</li>
+<li>${DESK ? 'Double-click to zoom, and double-click again to fit the page. Ctrl and the scroll wheel (or a trackpad pinch) zoom too.' : 'Pinch or double-tap to zoom. Double-tap again to fit the page.'}</li>
 <li>Choose <b>Scroll</b> for a continuous column of pages or <b>Pages</b> for one page at a time.</li>
 <li><b>Night</b> and <b>Sepia</b> recolour the pages for reading in the dark.</li>
-<li>In PDFs with real text you can select words, tap <b>Define</b> and search. Scanned PDFs and most DjVu books are pictures of pages, so they can be read and bookmarked but not searched.</li>
+<li>In PDFs with real text you can select words, ${tap} <b>Define</b> and search. Scanned PDFs and most DjVu books are pictures of pages, so they can be read and bookmarked but not searched.</li>
 </ul>` }
 ];
 
@@ -348,7 +368,7 @@ const THEME_ICON = {
 function applyTheme() {
   document.documentElement.dataset.theme = isDark() ? 'dark' : 'light';
   $('#theme-btn').innerHTML = THEME_ICON[theme];
-  $('#theme-btn').setAttribute('aria-label', `Theme: ${theme}. Tap to change.`);
+  $('#theme-btn').setAttribute('aria-label', `Theme: ${theme}. ${TAP} to change.`);
   $$('#theme-seg button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === theme)));
   if (state.reader) applyPrefs(); else setStatusBar();
 }
@@ -492,7 +512,7 @@ $('#bs-share').addEventListener('click', () => { const b = sheetBook; closeLShee
 $('#bs-reset').addEventListener('click', () => { const b = sheetBook; closeLSheets(); if (!b) return; LS.del('reflow:pos:' + b.id); b.opened = 0; if (b.id !== 'sample') DB.put(b); renderShelf(); toast('Marked as unread.'); });
 $('#bs-remove').addEventListener('click', async () => {
   const b = sheetBook; if (!b) return;
-  if (!rmArmed) { $('#bs-remove-t').textContent = 'Tap again to remove'; rmArmed = setTimeout(() => { $('#bs-remove-t').textContent = 'Remove from library'; rmArmed = null; }, 3000); return; }
+  if (!rmArmed) { $('#bs-remove-t').textContent = `${TAP} again to remove`; rmArmed = setTimeout(() => { $('#bs-remove-t').textContent = 'Remove from library'; rmArmed = null; }, 3000); return; }
   clearTimeout(rmArmed); rmArmed = null; closeLSheets(); await removeBook(b);
 });
 async function removeBook(b) {
@@ -790,6 +810,34 @@ async function pullIncoming() {
   }
   if (last && files.length === 1) { if (state.reader) closeReader(); openBook(last.id); }
 }
+/* Books opened from the system on desktop ("Open with Panna", double-click, File > Add books…). */
+async function pullDesktop() {
+  let got; try { got = await DESK.take(); } catch { return; }
+  let last = null, n = 0;
+  for (const f of got || []) {
+    if (f.error) { toast(`Could not open ${f.name}. ${f.error}`, 6000); continue; }
+    n++;
+    try { const rec = await handleFile(new File([f.data], f.name)); if (rec) last = rec; }
+    catch { toast(`Could not open ${f.name}.`); }
+  }
+  if (last && n === 1) { if (state.reader) closeReader(); openBook(last.id); }
+}
+/* iOS: a book sent to Panna from Files, Mail or another app's share sheet. iOS copies it into Documents/Inbox. */
+const urlsTaken = new Set(); // a cold start can report the same file twice (launch URL and the retained event)
+async function openIncomingUrl(url) {
+  if (!url || !/^file:/i.test(url) || urlsTaken.has(url)) return;
+  urlsTaken.add(url);
+  let name = 'book'; try { name = decodeURIComponent(url.split('?')[0].split('/').pop()) || name; } catch {}
+  toast('Receiving the file…', 60000);
+  try {
+    const r = await fetch(Cap.convertFileSrc(url));
+    if (!r.ok) throw new Error();
+    const blob = await r.blob();
+    const rec = await handleFile(new File([blob], name, { type: blob.type || '' }));
+    if (rec) { if (state.reader) closeReader(); openBook(rec.id); }
+  } catch { toast(`Could not open ${name}.`); }
+  try { await plug('Filesystem').deleteFile({ path: url }); } catch {}
+}
 /* ---------- home-screen widget ----------
    The widget is native and can't read the library, so it is sent a summary of the books in progress (title,
    place, progress) and covers shrunk to 420 px, whenever the shelf is redrawn or the app goes to the background. */
@@ -853,7 +901,7 @@ function applyPrefs() {
   $$('.pseg').forEach(g => g.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(String(prefs[g.dataset.pref]) === b.dataset.v))));
   $('#pref-trim').checked = !!prefs.trim; applyDim();
   $('#pref-awake').checked = !!prefs.awake; $('#pref-vol').checked = !!prefs.vol; $('#pref-full').checked = !!prefs.full;
-  $('#vol-row').hidden = !isNative; $('#full-row').hidden = !isNative;
+  $('#vol-row').hidden = !isAndroid; $('#full-row').hidden = !isAndroid;
   if (state.reader) keepAwake(prefs.awake);
   syncVolume();
   setStatusBar();
@@ -913,7 +961,7 @@ async function openBook(id) {
   $('#reader').classList.toggle('immersive', state.reader.immersive);
   $('#content').lang = bk.lang || 'en';
   applyPrefs(); closeSheets(); hideSel();
-  if (state.reader.immersive && !LS.get('reflow:tipChrome', false)) { LS.set('reflow:tipChrome', true); toast('Tap the middle of the page for the menu.', 4000); }
+  if (state.reader.immersive && !LS.get('reflow:tipChrome', false)) { LS.set('reflow:tipChrome', true); toast(`${TAP} the middle of the page for the menu.`, 4000); }
   $('#reader').hidden = false; document.body.style.overflow = 'hidden';
   $('#r-t1').textContent = b.title;
   $('#search-results').replaceChildren(); $('#search-status').textContent = 'Type a word or phrase.'; $('#search-q').value = '';
@@ -1580,7 +1628,7 @@ function renderMarks() {
   const nh = ms.filter(m => m.kind === 'hl').length, nb = ms.length - nh;
   $('#marks-count').textContent = `${nh} highlight${nh === 1 ? '' : 's'} · ${nb} bookmark${nb === 1 ? '' : 's'}`;
   $('#marks-share').hidden = !ms.length;
-  if (!ms.length) { const p = document.createElement('p'); p.className = 'pane-note'; p.textContent = R.fixed ? (R.kind === 'pdf' ? 'Select text to highlight it, or tap the bookmark button at the top to mark a page.' : 'Tap the bookmark button at the top to mark a page.') : 'Select text to highlight it, or tap the bookmark button at the top to mark a page.'; list.append(p); return; }
+  if (!ms.length) { const p = document.createElement('p'); p.className = 'pane-note'; p.textContent = R.fixed ? (R.kind === 'pdf' ? `Select text to highlight it, or ${tap} the bookmark button at the top to mark a page.` : `${TAP} the bookmark button at the top to mark a page.`) : `Select text to highlight it, or ${tap} the bookmark button at the top to mark a page.`; list.append(p); return; }
   for (const m of ms) {
     const b = document.createElement('button'); b.type = 'button';
     b.className = 'mark-item ' + (m.kind === 'hl' ? 'c-' + (m.color || 'yellow') : 'bm');
@@ -1820,7 +1868,7 @@ async function openFixed(b) {
   const fc = b.fx && b.fx.n === R.doc.n ? b.fx : null;
   if (fc) { for (const [i, w, h] of fc.sizes || []) if (R.doc.sizes[i]) R.doc.sizes[i] = { w, h }; if (fc.cropDone) R.crop = fc.crop; }
   fxLayout(start);
-  if (R.immersive && !LS.get('reflow:tipChrome', false)) { LS.set('reflow:tipChrome', true); toast('Tap the middle of the page for the menu. Pinch or double-tap to zoom.', 4500); }
+  if (R.immersive && !LS.get('reflow:tipChrome', false)) { LS.set('reflow:tipChrome', true); toast(DESK ? 'Click the middle of the page for the menu. Double-click or Ctrl+scroll to zoom.' : 'Tap the middle of the page for the menu. Pinch or double-tap to zoom.', 4500); }
   fxBox().focus({ preventScroll: true });
   R.doc.toc().then(t => { if (state.reader === R) { R.toc = t; buildToc(); fxStatus(); } }).catch(() => {});
   if (!(fc && fc.cropDone)) setTimeout(() => { if (state.reader === R) fxDetectCrop(R); }, 700);
@@ -2350,6 +2398,10 @@ async function boot() {
       });
       APP.addListener('pause', () => { savePos(true); widgetSync(true); });
       APP.addListener('resume', () => { setStatusBar(); if (state.reader) keepAwake(prefs.awake); });
+      if (isIOS) {
+        APP.addListener('appUrlOpen', ev => openIncomingUrl(ev && ev.url));
+        APP.getLaunchUrl().then(r => openIncomingUrl(r && r.url)).catch(() => {});
+      }
     } catch {}
     try {
       if (N) {
@@ -2360,6 +2412,7 @@ async function boot() {
       }
     } catch {}
   }
+  if (DESK) { DESK.onIncoming(pullDesktop); pullDesktop(); }
   setStatusBar();
 }
 boot();

@@ -2,8 +2,8 @@
 
 # Panna
 
-**Panna** (ਪੰਨਾ · पन्ना, "page") is a free, offline reader for **EPUB, PDF and DjVu** on Android.
-No accounts, no ads, no tracking. Your books never leave your phone.
+**Panna** (ਪੰਨਾ · पन्ना, "page") is a free, offline reader for **EPUB, PDF and DjVu** on Android, iPhone and iPad, Windows, macOS and Linux.
+No accounts, no ads, no tracking. Your books never leave your device.
 
 <p align="center">
   <img src="docs/library-light.jpg" width="200" alt="Library with the continue-reading card, light theme">
@@ -14,7 +14,11 @@ No accounts, no ads, no tracking. Your books never leave your phone.
 
 ## Download
 
-Get the latest APK from **[Releases](../../releases/latest)**, open it on your phone and allow installing from your browser or file manager. Android 6.0 or newer.
+Everything is on the **[Releases](../../releases)** page. Each device keeps its own library; to move it, use **Back up library** on one and **Restore from backup** on the other (gear icon in the library).
+
+### Android
+
+Get the APK from the latest release that has one, open it on your phone and allow installing from your browser or file manager. Android 6.0 or newer.
 
 **Updating from 1.1.0:** version 1.2.0 is signed with a new key, so Android will not install it over 1.1.0 ("App not installed" or "package conflicts"). To keep your books and reading places:
 
@@ -31,6 +35,32 @@ CC:09:11:F6:27:27:97:A8:67:FF:F1:52:CF:10:0F:65:C1:C2:30:F3:C2:8E:A1:8D:DB:7C:8B
 ```
 
 (Apps such as AppVerifier, or `apksigner verify --print-certs Panna.apk`, show it.)
+
+### Windows
+
+Download `Panna-…-windows-x64-setup.exe` and run it (Windows 10 or 11). The installer isn't signed with a paid certificate, so SmartScreen may say "Windows protected your PC": click **More info**, then **Run anyway**. No installer wanted? Unpack `Panna-…-win-x64.zip` anywhere and run `Panna.exe`.
+
+### macOS
+
+Download `Panna-…-macos-universal.dmg` (Apple silicon and Intel, macOS 12 or newer), open it and drag Panna to Applications. Panna isn't notarized by Apple (that needs a paid developer account), so the first time macOS refuses to open it:
+
+1. Try to open Panna once and close the warning.
+2. Open **System Settings → Privacy & Security**, scroll down and click **Open Anyway** next to the line about Panna.
+
+After that it opens normally. If macOS ever says Panna "is damaged", run `xattr -dr com.apple.quarantine /Applications/Panna.app` in Terminal.
+
+### Linux
+
+- **Debian, Ubuntu, Mint, Pop!_OS:** `sudo apt install ./Panna-…-linux-amd64.deb`. Panna then appears in your apps and in "Open with" for EPUB, PDF and DjVu files.
+- **Other distributions:** make `Panna-…-linux-x86_64.AppImage` executable (`chmod +x`) and run it. On Ubuntu 24.04 and newer an AppImage can't use Chromium's sandbox and won't start; use the .deb there.
+
+Read aloud uses the system's voices through speech-dispatcher, which most desktops include (`sudo apt install speech-dispatcher` if it's missing).
+
+### iPhone and iPad
+
+There is no App Store version: that needs a paid Apple developer account. The release has an unsigned `Panna-…-ios-unsigned.ipa` that you sign with your own Apple ID using [AltStore](https://altstore.io) or [Sideloadly](https://sideloadly.io) on a computer. With a free Apple ID the app has to be refreshed every 7 days (AltStore does this by itself when the phone and the computer running AltServer are on the same Wi-Fi). iOS 16.4 or newer.
+
+Books shared to Panna from Files, Mail or other apps open in it. The home-screen widget and volume-key page turning are Android-only.
 
 ## New in 1.2.0
 
@@ -97,7 +127,7 @@ Panna makes no network requests: every feature works offline, and there are no a
 
 ## Build it yourself
 
-Requirements: Node 20+, JDK 21, Android SDK (platform 35, build-tools 35).
+**Android** needs Node 20+, JDK 21 and the Android SDK (platform 35, build-tools 35).
 
 ```sh
 npm install
@@ -116,11 +146,33 @@ keyPassword=...
 
 Without that file the release APK is unsigned.
 
+**Windows, macOS, Linux** (Electron, in `desktop/`; build each on its own system):
+
+```sh
+cd desktop
+npm install
+npm start               # run from source
+npm run dist:linux      # or dist:win, dist:mac -> desktop/dist/
+```
+
+**iOS** needs a Mac with Xcode 16 or newer:
+
+```sh
+npm install
+npx cap sync ios
+open ios/App/App.xcodeproj   # then pick your team under Signing & Capabilities and run
+```
+
+The GitHub Actions workflow `.github/workflows/build.yml` builds the Windows, macOS, Linux and unsigned iOS files; run it from the Actions tab.
+
 **Where things are**
 - `www/`: the whole interface, plain HTML and JavaScript with no build step: `index.html` (layout and styles), `app.js` (everything else), `theme.js` (applies the saved theme before the first paint)
 - `www/vendor/`: pdf.js, DjVu.js, JSZip, the dictionary and their licences
 - `android/app/src/main/java/app/panna/reader/`: native code: `MainActivity` (opening and sharing files, volume keys), `ReflowNativePlugin` (bridge to the page: keep screen on, full screen, widget data), `PannaWidget` (the home-screen widget)
 - `android/app/src/main/res/layout/widget_*.xml`: the widget's layouts
+- `desktop/`: the Windows, macOS and Linux app: `main.js` (window, serving `www/` from `app://panna`, files opened from the system), `preload.js` (what the page can ask of it)
+- `ios/`: the iOS project (Capacitor); `ios/App/App/Info.plist` lists the file types Panna opens
+- `tools/make_platform_icons.py`: desktop and iOS icons, drawn from the Android icon's code
 - [tools/BUILD_ENGINES.md](tools/BUILD_ENGINES.md): rebuilding the bundled engines, dictionary and icons
 
 ## Licence

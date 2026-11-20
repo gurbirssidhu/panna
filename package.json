@@ -1,9 +1,10 @@
 {
   "name": "panna",
-  "version": "1.2.0",
-  "description": "Panna: an offline EPUB, PDF and DjVu reader for Android",
+  "version": "1.3.0",
+  "description": "Panna: an offline EPUB, PDF and DjVu reader for Android, iOS, Windows, macOS and Linux",
   "scripts": {
     "sync": "cap sync android",
+    "sync:ios": "cap sync ios",
     "build": "cap sync android && cd android && ./gradlew assembleRelease"
   },
   "keywords": [],
@@ -15,6 +16,7 @@
     "@capacitor/app": "^7.1.2",
     "@capacitor/core": "^7.6.9",
     "@capacitor/filesystem": "^7.1.8",
+    "@capacitor/ios": "^7.6.10",
     "@capacitor/share": "^7.0.4",
     "@capacitor/status-bar": "^7.0.6",
     "@fontsource/atkinson-hyperlegible": "^5.3.0",

@@ -1,0 +1,69 @@
+{
+  "name": "panna-desktop",
+  "productName": "Panna",
+  "version": "1.3.0",
+  "description": "Panna: an offline EPUB, PDF and DjVu reader",
+  "homepage": "https://github.com/gurbirssidhu/panna",
+  "author": {
+    "name": "Gurbir Singh",
+    "email": "70846454+gurbirssidhu@users.noreply.github.com"
+  },
+  "license": "GPL-3.0-or-later",
+  "private": true,
+  "main": "main.js",
+  "desktopName": "panna.desktop",
+  "scripts": {
+    "start": "electron .",
+    "dist:linux": "electron-builder --linux --publish never",
+    "dist:win": "electron-builder --win --publish never",
+    "dist:mac": "electron-builder --mac --publish never"
+  },
+  "devDependencies": {
+    "electron": "45.2.3",
+    "electron-builder": "26.18.1"
+  },
+  "build": {
+    "appId": "app.panna.reader",
+    "productName": "Panna",
+    "copyright": "Panna contributors, GPL-3.0-or-later",
+    "artifactName": "Panna-${version}-${os}-${arch}.${ext}",
+    "directories": { "output": "dist", "buildResources": "build" },
+    "files": ["main.js", "preload.js", "package.json", "build/icons/256x256.png"],
+    "extraResources": [{ "from": "../www", "to": "www" }],
+    "fileAssociations": [
+      { "ext": "epub", "name": "EPUB book", "mimeType": "application/epub+zip", "role": "Viewer" },
+      { "ext": "pdf", "name": "PDF document", "mimeType": "application/pdf", "role": "Viewer", "rank": "Alternate" },
+      { "ext": ["djvu", "djv"], "name": "DjVu document", "mimeType": "image/vnd.djvu", "role": "Viewer" }
+    ],
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "category": "Office;Viewer",
+      "icon": "build/icons",
+      "syncDesktopName": true,
+      "synopsis": "Offline EPUB, PDF and DjVu reader",
+      "executableName": "panna",
+      "desktop": { "entry": { "Keywords": "ebook;epub;pdf;djvu;reader;" } }
+    },
+    "deb": { "packageName": "panna-reader", "recommends": ["speech-dispatcher"] },
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }, { "target": "zip", "arch": ["x64"] }],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "Panna",
+      "artifactName": "Panna-${version}-windows-${arch}-setup.${ext}"
+    },
+    "mac": {
+      "target": [{ "target": "dmg", "arch": ["universal"] }, { "target": "zip", "arch": ["universal"] }],
+      "category": "public.app-category.books",
+      "icon": "build/icon-mac.png",
+      "identity": "-",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false
+    },
+    "dmg": { "artifactName": "Panna-${version}-macos-universal.${ext}" }
+  }
+}

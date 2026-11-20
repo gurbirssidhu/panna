@@ -1,0 +1,95 @@
+# Builds Panna for Windows, macOS, Linux (desktop/, Electron) and iOS (ios/, Capacitor; unsigned, for sideloading).
+# Run it from the Actions tab ("Run workflow"); the files are attached to the run as artifacts. Pushing a v* tag
+# does the same and also attaches them to that tag's GitHub release, if the release exists.
+# The Android APK is built and signed locally (the release key never leaves the maintainer's machine).
+name: Desktop and iOS builds
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  desktop:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Linux, os: ubuntu-24.04, flags: --linux }
+          - { name: Windows, os: windows-2025, flags: --win }
+          - { name: macOS, os: macos-15, flags: --mac }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - run: npm ci
+        working-directory: desktop
+      - run: npx electron-builder ${{ matrix.flags }} --publish never
+        working-directory: desktop
+      - uses: actions/upload-artifact@v4
+        with:
+          name: panna-${{ matrix.name }}
+          if-no-files-found: error
+          path: |
+            desktop/dist/*.AppImage
+            desktop/dist/*.deb
+            desktop/dist/*.exe
+            desktop/dist/*.zip
+            desktop/dist/*.dmg
+
+  ios:
+    name: iOS
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx cap sync ios
+      - name: Build (unsigned)
+        run: |
+          xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
+      - name: Package .ipa
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          mkdir Payload
+          cp -R build/Build/Products/Release-iphoneos/App.app Payload/
+          zip -qry "Panna-$VERSION-ios-unsigned.ipa" Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: panna-iOS
+          if-no-files-found: error
+          path: Panna-*-ios-unsigned.ipa
+
+  release:
+    name: Attach to the release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [desktop, ios]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - name: Upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -la out
+          if gh release view "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" out/* --clobber -R "$GITHUB_REPOSITORY"
+          else
+            echo "No release for $GITHUB_REF_NAME yet: the files are in this run's artifacts."
+          fi
