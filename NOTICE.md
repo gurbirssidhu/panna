@@ -5,9 +5,11 @@
 | [pdf.js](https://github.com/mozilla/pdf.js) (incl. CMaps and standard fonts) | 3.11.174 | Apache 2.0 | Rendering PDF pages and text |
 | [DjVu.js library](https://github.com/RussCoder/djvujs) | 0.5.4 | GPL 2.0 | Rendering DjVu pages |
 | [JSZip](https://github.com/Stuk/jszip) | 3.10.1 | MIT (dual MIT / GPL 3.0) | Reading EPUB files, backups |
-| [WordNet](https://wordnet.princeton.edu/) | 3.1 | WordNet 3.0 licence (Princeton) | Offline dictionary |
-| [Capacitor](https://capacitorjs.com/) and plugins (App, Filesystem, Share, Status Bar) | 7 | MIT | Android shell |
+| [WordNet](https://wordnet.princeton.edu/) | 3.1 | WordNet 3.0 licence (Princeton) | Offline dictionary (built in) |
+| [English Wiktionary](https://en.wiktionary.org/) via [kaikki.org](https://kaikki.org) | October 2026 extract | CC BY-SA 4.0 / GFDL | Optional dictionary pack, downloaded on request (not bundled) |
+| [Capacitor](https://capacitorjs.com/) and plugins (App, Filesystem, Share, Status Bar) | 7 | MIT | Android and iOS shell |
 | [@capacitor-community/text-to-speech](https://github.com/capacitor-community/text-to-speech) | 6.1.0 | MIT | Read aloud |
+| [Electron](https://www.electronjs.org/) | 45.2.3 | MIT (Chromium and Node.js under their own licences) | Windows, macOS and Linux app |
 | [Literata](https://github.com/googlefonts/literata) | 5.3 (Fontsource) | SIL Open Font Licence 1.1 | Reading typeface |
 | [Atkinson Hyperlegible](https://brailleinstitute.org/freefont) | Fontsource | SIL Open Font Licence 1.1 | Reading typeface |
 | [Schibsted Grotesk](https://github.com/schibsted/schibsted-grotesk) | Fontsource | SIL Open Font Licence 1.1 | Interface typeface |

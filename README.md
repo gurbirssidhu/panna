@@ -18,7 +18,7 @@ Everything is on the **[Releases](../../releases)** page. Each device keeps its 
 
 ### Android
 
-Get the APK from the latest release that has one, open it on your phone and allow installing from your browser or file manager. Android 6.0 or newer.
+Download `Panna-….apk` from the latest release, open it on your phone or tablet and allow installing from your browser or file manager. Android 6.0 or newer. New versions install over the old one and keep your books.
 
 **Updating from 1.1.0:** version 1.2.0 is signed with a new key, so Android will not install it over 1.1.0 ("App not installed" or "package conflicts"). To keep your books and reading places:
 
@@ -69,19 +69,7 @@ Books shared to Panna from Files, Mail or other apps open in it. The home-screen
 - **The selection menu opens right below the words you select** (above them near the bottom of the screen)
 - Fixes: the last page of a chapter no longer stops short by one margin; the desktop app no longer fetches a spellcheck dictionary from Google on first start
 
-## New in 1.2.0
-
-- **Home-screen widget** with the book you're reading (details below)
-- **Highlights and notes in PDFs**, in the same four colours as EPUBs
-- **EPUBs keep their own look:** drop caps, centred headings, small caps, indents and illustrations, while your typeface, text size, line spacing and colours still apply
-- **Right-to-left books** (Arabic, Urdu, Hebrew) read in the right direction
-- **Menu floats over the page:** tap the middle of the page to show or hide it, and the text never jumps or re-flows. Books open with the menu hidden
-- **Bookmarks land on the exact line**, even after you change the text size
-- **Volume keys** turn one page per press, and change the volume as usual during read-aloud or while a menu is open
-- **Mouse and trackpad** turn pages: one swipe is one page
-- **Big libraries back up** in one file, with a progress bar and no 4 GB limit
-- **Clear messages:** shared files show "Receiving the file…" while they copy, and DRM-locked shop EPUBs say so instead of failing silently
-- **Safer book handling:** scripts and remote content inside books are stripped, and a strict content policy stops a book from loading anything from the internet
+Earlier changes (1.3.0 brought Windows, macOS, Linux, iPhone and iPad; 1.2.0 the widget, PDF highlights and right-to-left books) are on the [Releases](../../releases) page.
 
 ## Dictionary
 
@@ -92,10 +80,10 @@ Select a word and tap **Define**. The built-in dictionary is WordNet 3.1: fast a
 **Library**
 - Continue-reading card, search by title or author, sort, filter by format
 - Covers from each book's first page, progress on every book
-- Light, dark or follow-the-phone theme
-- Back up everything (books, highlights, bookmarks, places) to one .zip and restore it on another phone
+- Light, dark or follow-the-system theme
+- Back up everything (books, highlights, bookmarks, places) to one .zip and restore it on another phone, tablet or computer
 
-**Home-screen widget**
+**Home-screen widget** (Android)
 - Add it from the library's settings (gear icon → **Add widget to home screen**), or from your launcher's widget list
 - Small size: the cover on a soft blurred background, a progress ring, and how many minutes are left in the chapter
 - Wide size: cover, title, author, where you are in the book, and a progress bar
@@ -103,8 +91,10 @@ Select a word and tap **Define**. The built-in dictionary is WordNet 3.1: fast a
 
 **EPUB**
 - Pages or scroll; turn with tap zones, swipes, volume keys, a keyboard or a trackpad
-- Text size, three typefaces (including Atkinson Hyperlegible), spacing, line width, hyphenation
+- Text size, three typefaces (including Atkinson Hyperlegible), spacing, line width, margins, hyphenation
+- Alignment: the book's own, left, or justified
 - The book's own layout is kept; only your reading settings override it
+- Right-to-left books (Arabic, Urdu, Hebrew) read in the right direction
 - Highlights in four colours with notes, bookmarks, full-text search, notes export
 - Footnotes open in a popup without losing your place
 - Time left in the chapter and in the book
@@ -119,10 +109,15 @@ Select a word and tap **Define**. The built-in dictionary is WordNet 3.1: fast a
 - Large PDFs open instantly: only the pages on screen are read from storage
 
 **Everywhere**
-- Offline English dictionary (WordNet 3.1): select a word, tap Define
-- Read aloud with your phone's own voices; follows the text and turns pages (Hindi and Punjabi voices are used for those scripts when installed)
+- Offline English dictionary: select a word, tap Define. WordNet 3.1 is built in; Wiktionary (900,000+ words) is an optional one-time download
+- Read aloud with your device's own voices; follows the text and turns pages (Hindi and Punjabi voices are used for those scripts when installed)
 - Brightness dimmer, full-screen reading, keep screen on
 - Open or share EPUB, PDF and DjVu files from any app
+
+**On a computer**
+- Double-click a book, use **Open with → Panna**, **File → Add books…** (Ctrl+O / ⌘O) or drop files on the window
+- Arrow keys or clicks on the sides of the page turn it; click the middle for the menu; Esc closes the book
+- Double-click or Ctrl+scroll zooms PDF and DjVu pages
 
 <p align="center">
   <img src="docs/reader-epub-styles.jpg" width="200" alt="An illustrated EPUB keeping its own chapter art and drop cap">
@@ -134,7 +129,7 @@ Select a word and tap **Define**. The built-in dictionary is WordNet 3.1: fast a
 
 ## Privacy
 
-Panna makes no network requests: every feature works offline, and there are no analytics, ads or accounts. (Android lists an internet permission because the app framework adds it by default; the app does not use it.) Everything is stored in the app on your phone. The widget shows the current book's title and cover on your home screen; remove the widget if you'd rather not show it. See [PRIVACY.md](PRIVACY.md).
+Every feature works offline, and there are no analytics, ads, accounts or update checks. Panna goes online only if you tap **Download Wiktionary**, to fetch that one file from this project's GitHub releases; the words you look up never leave your device. Scripts and remote content inside books are stripped, and a strict content policy stops a book from loading anything from the internet. Everything is stored in the app on your device. The widget shows the current book's title and cover on your home screen; remove the widget if you'd rather not show it. See [PRIVACY.md](PRIVACY.md).
 
 ## Build it yourself
 
@@ -184,12 +179,13 @@ The GitHub Actions workflow `.github/workflows/build.yml` builds the Windows, ma
 - `desktop/`: the Windows, macOS and Linux app: `main.js` (window, serving `www/` from `app://panna`, files opened from the system), `preload.js` (what the page can ask of it)
 - `ios/`: the iOS project (Capacitor); `ios/App/App/Info.plist` lists the file types Panna opens
 - `tools/make_platform_icons.py`: desktop and iOS icons, drawn from the Android icon's code
+- `tools/build_wiktionary.py`: builds the optional Wiktionary pack from [kaikki.org](https://kaikki.org)'s English extract (usage at the top of the file). The app pins the pack's URL and SHA-256 (`WIKT` in `www/app.js`), so a new pack needs an app update
 - [tools/BUILD_ENGINES.md](tools/BUILD_ENGINES.md): rebuilding the bundled engines, dictionary and icons
 
 ## Licence
 
 Panna is free software under the [GNU General Public License v3.0 or later](LICENSE).
-It bundles pdf.js, DjVu.js, JSZip, WordNet, Capacitor and three open fonts; their licences are listed in [NOTICE.md](NOTICE.md), with full texts in `www/vendor/licenses`.
+It bundles pdf.js, DjVu.js, JSZip, WordNet, Capacitor (Android, iOS), Electron (desktop) and three open fonts; their licences are listed in [NOTICE.md](NOTICE.md), with full texts in `www/vendor/licenses`. The optional Wiktionary pack is CC BY-SA 4.0 and carries its own notice.
 
 **Known licensing issue:** DjVu.js is published under GPL 2.0 without the "or later" option, which is not formally compatible with GPL 3.0 or with pdf.js's Apache 2.0 licence. A request to the DjVu.js author to allow "GPL 2.0 or later" is the intended fix; until then, this is noted openly here.
 
