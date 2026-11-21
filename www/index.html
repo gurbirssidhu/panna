@@ -106,7 +106,7 @@ h1,h2,h3{text-wrap:balance}
 .tools{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;margin:26px 0 16px}
 .tools h2{margin:0;font-size:1.15rem;letter-spacing:-.01em}
 .search{position:relative;grid-column:1/-1;min-width:0}
-@media (min-width:700px){.tools{grid-template-columns:auto 1fr auto}.search{grid-column:auto;max-width:420px;justify-self:end;width:100%}}
+@media (min-width:700px){.tools{grid-template-columns:auto auto 1fr}.search{grid-column:auto;max-width:420px;justify-self:end;width:100%}}
 .search svg{position:absolute;left:11px;top:50%;width:18px;height:18px;transform:translateY(-50%);fill:none;stroke:var(--muted);stroke-width:2;stroke-linecap:round}
 .search input{width:100%;height:40px;border:1px solid var(--line);background:var(--surface);border-radius:12px;padding:0 12px 0 36px}
 .sort{height:40px;border:1px solid var(--line);background:var(--surface);border-radius:12px;padding:0 10px}
@@ -248,6 +248,7 @@ h1,h2,h3{text-wrap:balance}
 .dict-body .pos{margin:14px 0 4px;font-size:.72rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--paper-accent)}
 .dict-body ol{margin:0;padding-left:1.3em;display:grid;gap:8px}
 .dict-body li{line-height:1.45}
+.dict-body li::marker{font-variant-numeric:normal} /* the browser's default tabular digits are extra wide in Schibsted Grotesk: "1 ." */
 .dict-body .ex{display:block;color:var(--paper-muted);font-style:italic;font-family:var(--read)}
 .dict-body .syn{display:block;color:var(--paper-muted);font-size:.86rem}
 .dict-body .more{border:0;background:transparent;color:var(--paper-accent);font-weight:700;padding:6px 0}
@@ -266,6 +267,7 @@ h1,h2,h3{text-wrap:balance}
 .r-foot .track i{display:block;height:100%;width:0;background:var(--paper-accent)}
 .r-foot .line{display:flex;justify-content:space-between;gap:10px}
 .r-foot .line span:first-child{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.r-foot .line span:last-child{flex-shrink:0;white-space:nowrap} /* "1% · 8 h 14 min left" stays on one line; the left side gives way */
 
 .selbar{position:absolute;z-index:4;left:50%;transform:translateX(-50%);bottom:calc(58px + env(safe-area-inset-bottom,0px));display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:999px;background:var(--paper);border:1px solid var(--paper-line);box-shadow:0 10px 30px -12px rgba(0,0,0,.45);font-family:var(--ui)}
 .dot{width:30px;height:30px;border-radius:50%;border:2px solid var(--paper-line);padding:0;flex:none}
@@ -313,6 +315,7 @@ h1,h2,h3{text-wrap:balance}
 .notebox{left:0;right:0;bottom:0;border-radius:16px 16px 0 0;padding:16px 16px calc(16px + env(safe-area-inset-bottom,0px));display:grid;gap:12px;max-height:80%;overflow-y:auto}
 .notebox blockquote{margin:0;padding-left:12px;border-left:3px solid var(--paper-line);font-family:var(--read);color:var(--paper-muted);max-height:6.5em;overflow:hidden}
 .notebox textarea{width:100%;min-height:90px;border:1px solid var(--paper-line);background:var(--paper-raise);border-radius:10px;padding:10px 12px;resize:vertical}
+@media (min-width:700px){.notebox{left:max(0px,calc(50% - 320px));right:max(0px,calc(50% - 320px))}} /* dictionary, note and footnote sheets: centred, not window-wide */
 .notebox .rowx{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .notebox .rowx .sp{flex:1}
 .nb-btn{border:1px solid var(--paper-line);background:transparent;color:var(--paper-ink);border-radius:9px;padding:8px 14px;font-weight:700}
