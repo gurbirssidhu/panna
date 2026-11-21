@@ -7,9 +7,9 @@ No accounts, no ads, no tracking. Your books never leave your device.
 
 <p align="center">
   <img src="docs/library-light.jpg" width="200" alt="Library with the continue-reading card, light theme">
-  <img src="docs/reader-epub.jpg" width="200" alt="Reading an EPUB with the menu showing over the page">
-  <img src="docs/reader-pdf.jpg" width="200" alt="A PDF with trimmed margins and a yellow highlight">
-  <img src="docs/library-dark.jpg" width="200" alt="Library, dark theme">
+  <img src="docs/reader-epub.jpg" width="200" alt="Reading an EPUB: the first sentence highlighted, the menu over the page">
+  <img src="docs/reader-pdf.jpg" width="200" alt="A PDF of engineering notes with equations, a table and a yellow highlight">
+  <img src="docs/library-dark.jpg" width="200" alt="Library, dark theme, with reading progress on each book">
 </p>
 
 ## Download
@@ -69,6 +69,11 @@ Books shared to Panna from Files, Mail or other apps open in it. The home-screen
 - **The selection menu opens right below the words you select** (above them near the bottom of the screen)
 - Fixes: the last page of a chapter no longer stops short by one margin; the desktop app no longer fetches a spellcheck dictionary from Google on first start
 
+<p align="center">
+  <img src="docs/define.jpg" width="200" alt="Define: the Wiktionary entry for caprice, with pronunciation and senses, offline">
+  <img src="docs/reader-settings.jpg" width="200" alt="Reading settings with the new Alignment and Margins options">
+</p>
+
 Earlier changes (1.3.0 brought Windows, macOS, Linux, iPhone and iPad; 1.2.0 the widget, PDF highlights and right-to-left books) are on the [Releases](../../releases) page.
 
 ## Dictionary
@@ -120,12 +125,17 @@ Select a word and tap **Define**. The built-in dictionary is WordNet 3.1: fast a
 - Double-click or Ctrl+scroll zooms PDF and DjVu pages
 
 <p align="center">
-  <img src="docs/reader-epub-styles.jpg" width="200" alt="An illustrated EPUB keeping its own chapter art and drop cap">
-  <img src="docs/reader-djvu-night.jpg" width="200" alt="A DjVu book with night page colours">
-  <img src="docs/settings.jpg" width="200" alt="Settings: theme, backup, add widget, restore">
+  <img src="docs/desktop-library.jpg" width="400" alt="Panna on Linux: the library in a desktop window">
+  <img src="docs/desktop-reader.jpg" width="400" alt="Panna on Linux: reading Pride and Prejudice with a highlight">
 </p>
 
-<sub>Screenshots use public-domain books from Project Gutenberg (*Pride and Prejudice* with Hugh Thomson's illustrations, *Frankenstein*, *Alice's Adventures in Wonderland*) and sample notes written for this page.</sub>
+<p align="center">
+  <img src="docs/reader-epub-styles.jpg" width="200" alt="An illustrated EPUB on the sepia page colour, keeping its own picture">
+  <img src="docs/reader-djvu-night.jpg" width="200" alt="A DjVu book with night page colours">
+  <img src="docs/settings.jpg" width="200" alt="Settings: theme, dictionary (WordNet or Wiktionary), backup, widget">
+</p>
+
+<sub>Screenshots from Panna on an Android phone and on Linux, with public-domain books from [Standard Ebooks](https://standardebooks.org) (*Pride and Prejudice*, *Alice's Adventures in Wonderland* with John Tenniel's illustrations, *Jane Eyre*, *Dracula*, *Frankenstein*), a DjVu typeset from the opening of H. G. Wells's *The Time Machine*, and sample notes written for this page.</sub>
 
 ## Privacy
 
